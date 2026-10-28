@@ -4,3 +4,4 @@ data/
 scratch/
 .idea/
 *.iml
+*.class
