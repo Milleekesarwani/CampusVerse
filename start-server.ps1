@@ -60,11 +60,53 @@ if (-not (Test-Path $catalinaBat)) {
     exit 1
 }
 
+# Clean stale DB lock
+if (Test-Path "data\campusverse_db.lock.db") {
+    Remove-Item "data\campusverse_db.lock.db" -Force -ErrorAction SilentlyContinue
+}
+
+# Clean old ROOT webapp classes/libs to prevent database file lock collision
+$rootClasses = Join-Path $env:CATALINA_HOME "webapps\ROOT\WEB-INF\classes"
+if (Test-Path $rootClasses) {
+    Remove-Item -Recurse -Force $rootClasses -ErrorAction SilentlyContinue
+}
+$rootLib = Join-Path $env:CATALINA_HOME "webapps\ROOT\WEB-INF\lib"
+if (Test-Path $rootLib) {
+    Remove-Item -Recurse -Force $rootLib -ErrorAction SilentlyContinue
+}
+
+# Ensure ROOT index.html redirects to /campusverse-lite/
+$rootIndex = Join-Path $env:CATALINA_HOME "webapps\ROOT\index.html"
+$rootHtml = @"
+<!DOCTYPE html>
+<html>
+<head>
+    <meta http-equiv="refresh" content="0; url=/campusverse-lite/">
+    <title>Redirecting to CampusVerse Lite...</title>
+</head>
+<body>
+    <p>Redirecting to <a href="/campusverse-lite/">CampusVerse Lite</a>...</p>
+</body>
+</html>
+"@
+if (-not (Test-Path (Join-Path $env:CATALINA_HOME "webapps\ROOT"))) {
+    New-Item -ItemType Directory -Path (Join-Path $env:CATALINA_HOME "webapps\ROOT") -Force | Out-Null
+}
+Set-Content -Path $rootIndex -Value $rootHtml -Encoding UTF8
+
+# Deploy WAR if exists in target
+$targetWar = "target\campusverse-lite.war"
+if (Test-Path $targetWar) {
+    Write-Host "[INFO] Deploying $targetWar to $($env:CATALINA_HOME)\webapps..." -ForegroundColor DarkCyan
+    Copy-Item -Path $targetWar -Destination (Join-Path $env:CATALINA_HOME "webapps\campusverse-lite.war") -Force
+}
+
 Write-Host "========================================================" -ForegroundColor Cyan
 Write-Host "Starting CampusVerse Lite on Apache Tomcat 10.1..." -ForegroundColor Green
 Write-Host "JAVA_HOME:     $($env:JAVA_HOME)" -ForegroundColor Gray
 Write-Host "CATALINA_HOME: $($env:CATALINA_HOME)" -ForegroundColor Gray
 Write-Host "Local URL:     http://localhost:8080/campusverse-lite/" -ForegroundColor Yellow
+Write-Host "Root URL:      http://localhost:8080/" -ForegroundColor Yellow
 Write-Host "========================================================" -ForegroundColor Cyan
 
 & $catalinaBat run

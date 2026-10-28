@@ -19,7 +19,14 @@ public class AppContextListener implements ServletContextListener {
 
     @Override
     public void contextDestroyed(ServletContextEvent sce) {
-        LOGGER.info("CampusVerse Lite shutting down.");
+        LOGGER.info("CampusVerse Lite shutting down. Closing database connections...");
+        try (java.sql.Connection conn = DatabaseManager.getConnection();
+             java.sql.Statement stmt = conn.createStatement()) {
+            stmt.execute("SHUTDOWN");
+        } catch (Exception e) {
+            LOGGER.warning("Database shutdown notice: " + e.getMessage());
+        }
+        LOGGER.info("Database closed successfully.");
     }
 }
 

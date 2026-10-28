@@ -16,7 +16,7 @@ public class DatabaseManager {
 
     private static final Logger LOGGER = Logger.getLogger(DatabaseManager.class.getName());
 
-    private static final String DEFAULT_DB_URL = "jdbc:h2:./data/campusverse_db;DB_CLOSE_DELAY=-1;AUTO_SERVER=TRUE";
+    private static final String DEFAULT_DB_URL = "jdbc:h2:./data/campusverse_db;DB_CLOSE_DELAY=-1";
     private static final String DB_USER = "sa";
     private static final String DB_PASSWORD = "";
 

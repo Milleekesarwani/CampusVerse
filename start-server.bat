@@ -79,11 +79,38 @@ if not exist "%CATALINA_HOME%\bin\catalina.bat" (
     exit /b 1
 )
 
+rem --- 3. Clean stale DB locks & duplicate ROOT listeners ---
+if exist "data\campusverse_db.lock.db" (
+    del /f /q "data\campusverse_db.lock.db" 2>nul
+)
+
+if exist "%CATALINA_HOME%\webapps\ROOT\WEB-INF\classes" (
+    rmdir /s /q "%CATALINA_HOME%\webapps\ROOT\WEB-INF\classes" 2>nul
+)
+if exist "%CATALINA_HOME%\webapps\ROOT\WEB-INF\lib" (
+    rmdir /s /q "%CATALINA_HOME%\webapps\ROOT\WEB-INF\lib" 2>nul
+)
+
+rem --- 4. Deploy WAR if present in target ---
+if exist "target\campusverse-lite.war" (
+    echo [INFO] Deploying target\campusverse-lite.war to %CATALINA_HOME%\webapps...
+    copy /y "target\campusverse-lite.war" "%CATALINA_HOME%\webapps\campusverse-lite.war" >nul
+)
+
+rem --- 5. Ensure ROOT redirects to /campusverse-lite/ ---
+if not exist "%CATALINA_HOME%\webapps\ROOT" (
+    mkdir "%CATALINA_HOME%\webapps\ROOT" 2>nul
+)
+if not exist "%CATALINA_HOME%\webapps\ROOT\index.html" (
+    echo ^<!DOCTYPE html^>^<html^>^<head^>^<meta http-equiv="refresh" content="0; url=/campusverse-lite/"^>^<title^>Redirecting...^</title^>^</head^>^<body^>^<p^>Redirecting to ^<a href="/campusverse-lite/"^>CampusVerse Lite^</a^>...^</p^>^</body^>^</html^> > "%CATALINA_HOME%\webapps\ROOT\index.html"
+)
+
 echo ========================================================
 echo Starting CampusVerse Lite on Apache Tomcat 10.1...
 echo JAVA_HOME:     %JAVA_HOME%
 echo CATALINA_HOME: %CATALINA_HOME%
 echo Local URL:     http://localhost:8080/campusverse-lite/
+echo Root URL:      http://localhost:8080/
 echo ========================================================
 
 call "%CATALINA_HOME%\bin\catalina.bat" run
