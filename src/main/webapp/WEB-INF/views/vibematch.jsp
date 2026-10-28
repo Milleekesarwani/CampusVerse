@@ -3,17 +3,24 @@
 <%@ page import="com.campusverse.model.Student" %>
 <%@ page import="com.campusverse.model.Room" %>
 <%@ page import="com.campusverse.model.Interest" %>
+<%@ page import="com.campusverse.util.SecurityUtils" %>
 <%@ page import="java.util.List" %>
 <%
     Student currentStudent = (Student) request.getAttribute("currentStudent");
     List<MatchResult> matches = (List<MatchResult>) request.getAttribute("matches");
     List<Room> studyRooms = (List<Room>) request.getAttribute("studyRooms");
+    String studentName = currentStudent != null ? SecurityUtils.escapeHtml(currentStudent.getNickname()) : "Student";
+    String csrfToken = (String) request.getAttribute("csrfToken");
+    if (csrfToken == null && session != null) {
+        csrfToken = (String) session.getAttribute("csrfToken");
+    }
 %>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="<%= csrfToken != null ? SecurityUtils.escapeHtml(csrfToken) : "" %>">
     <title>VibeMatch - CampusVerse Lite</title>
     <link rel="stylesheet" href="${pageContext.request.contextPath}/css/style.css">
     <style>
@@ -58,7 +65,7 @@
     <header class="app-header">
         <div class="container navbar">
             <div class="brand">
-                <a href="${pageContext.request.contextPath}/dashboard" class="logo-link">CampusVerse Lite</a>
+                <a href="${pageContext.request.contextPath}/home" class="logo-link">CampusVerse Lite</a>
             </div>
             <nav class="nav-links">
                 <a href="${pageContext.request.contextPath}/dashboard">Dashboard</a>
@@ -67,7 +74,7 @@
                 <a href="${pageContext.request.contextPath}/ghostrooms">GhostRooms</a>
             </nav>
             <div class="user-badge">
-                <span>👤 <strong><%= currentStudent != null ? currentStudent.getNickname() : "Student" %></strong></span>
+                <span>👤 <strong><%= studentName %></strong></span>
                 <a href="${pageContext.request.contextPath}/dashboard" class="btn btn-sm btn-outline">Dashboard</a>
             </div>
         </div>
@@ -79,13 +86,20 @@
             Connecting you with study partners using mathematical Jaccard similarity index based on shared interests.
         </p>
 
+        <% if (request.getParameter("error") != null) { %>
+            <div class="alert alert-danger"><%= SecurityUtils.escapeHtml(request.getParameter("error")) %></div>
+        <% } %>
+        <% if (request.getParameter("msg") != null) { %>
+            <div class="alert alert-success"><%= SecurityUtils.escapeHtml(request.getParameter("msg")) %></div>
+        <% } %>
+
         <!-- Current Student Interests Summary -->
         <section class="rooms-section" style="margin-bottom: 1.5rem;">
             <h4>Your Selected Interests (<%= currentStudent != null && currentStudent.getInterests() != null ? currentStudent.getInterests().size() : 0 %>)</h4>
             <div style="margin-top: 0.5rem;">
                 <% if (currentStudent != null && currentStudent.getInterests() != null && !currentStudent.getInterests().isEmpty()) {
                     for (Interest i : currentStudent.getInterests()) { %>
-                        <span class="tag"><%= i.getName() %></span>
+                        <span class="tag"><%= SecurityUtils.escapeHtml(i.getName()) %></span>
                 <%  }
                    } else { %>
                     <p style="color: var(--text-muted);">You haven't selected any interests yet. <a href="${pageContext.request.contextPath}/dashboard">Update on your Dashboard</a> to get better matches!</p>
@@ -102,7 +116,7 @@
                 <div class="match-card">
                     <div style="flex: 1;">
                         <h3 style="color: var(--text-color); margin-bottom: 0.25rem;">
-                            👤 <%= peer.getNickname() %>
+                            👤 <%= SecurityUtils.escapeHtml(peer.getNickname()) %>
                         </h3>
                         <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem;">
                             Total peer interests: <%= peer.getInterests() != null ? peer.getInterests().size() : 0 %>
@@ -111,7 +125,7 @@
                             <strong>Shared Topics:</strong>
                             <% if (m.getSharedInterests() != null && !m.getSharedInterests().isEmpty()) {
                                 for (String topic : m.getSharedInterests()) { %>
-                                    <span class="tag" style="background:#dcfce7; color:#166534;"><%= topic %></span>
+                                    <span class="tag" style="background:#dcfce7; color:#166534;"><%= SecurityUtils.escapeHtml(topic) %></span>
                             <%  }
                                } else { %>
                                 <span style="color: var(--text-muted); font-size: 0.85rem;">None yet</span>
@@ -145,4 +159,3 @@
     </footer>
 </body>
 </html>
-

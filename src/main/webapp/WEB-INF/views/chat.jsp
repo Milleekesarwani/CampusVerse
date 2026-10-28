@@ -2,6 +2,7 @@
 <%@ page import="com.campusverse.model.Room" %>
 <%@ page import="com.campusverse.model.Message" %>
 <%@ page import="com.campusverse.model.Student" %>
+<%@ page import="com.campusverse.util.SecurityUtils" %>
 <%@ page import="java.util.List" %>
 <%@ page import="java.text.SimpleDateFormat" %>
 <%
@@ -14,13 +15,20 @@
     if (history != null && !history.isEmpty()) {
         maxId = history.get(history.size() - 1).getId();
     }
+    String studentName = currentStudent != null ? SecurityUtils.escapeHtml(currentStudent.getNickname()) : "Student";
+    String roomName = room != null ? SecurityUtils.escapeHtml(room.getName()) : "Chat";
+    String csrfToken = (String) request.getAttribute("csrfToken");
+    if (csrfToken == null && session != null) {
+        csrfToken = (String) session.getAttribute("csrfToken");
+    }
 %>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><%= room != null ? room.getName() : "Chat" %> - CampusVerse Lite</title>
+    <meta name="csrf-token" content="<%= csrfToken != null ? SecurityUtils.escapeHtml(csrfToken) : "" %>">
+    <title><%= roomName %> - CampusVerse Lite</title>
     <link rel="stylesheet" href="${pageContext.request.contextPath}/css/style.css">
     <style>
         .chat-box {
@@ -81,6 +89,14 @@
             border: 1px solid var(--border-color);
             border-radius: 6px;
         }
+        #chatError {
+            display: none;
+            padding: 0.6rem 1rem;
+            background: #fee2e2;
+            color: #b91c1c;
+            border-bottom: 1px solid #fca5a5;
+            font-size: 0.85rem;
+        }
     </style>
 </head>
 <body>
@@ -96,7 +112,7 @@
                 <a href="${pageContext.request.contextPath}/ghostrooms">GhostRooms</a>
             </nav>
             <div class="user-badge">
-                <span>👤 <strong><%= currentStudent != null ? currentStudent.getNickname() : "Student" %></strong></span>
+                <span>👤 <strong><%= studentName %></strong></span>
                 <a href="${pageContext.request.contextPath}/dashboard" class="btn btn-sm btn-outline">Exit Room</a>
             </div>
         </div>
@@ -105,7 +121,7 @@
     <main class="container">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 1rem;">
             <div>
-                <h2>💬 <%= room != null ? room.getName() : "Study Room" %></h2>
+                <h2>💬 <%= roomName %></h2>
                 <span class="badge <%= isExpired ? "badge-closed" : "badge-open" %>">
                     <%= isExpired ? "CLOSED / Expired" : "ACTIVE" %>
                 </span>
@@ -116,10 +132,15 @@
         </div>
 
         <% if (request.getParameter("error") != null) { %>
-            <div class="alert alert-danger"><%= request.getParameter("error") %></div>
+            <div class="alert alert-danger"><%= SecurityUtils.escapeHtml(request.getParameter("error")) %></div>
+        <% } %>
+        <% if (request.getParameter("msg") != null) { %>
+            <div class="alert alert-success"><%= SecurityUtils.escapeHtml(request.getParameter("msg")) %></div>
         <% } %>
 
         <div class="chat-box">
+            <div id="chatError"></div>
+
             <div class="chat-messages" id="chatMessages">
                 <% if (history != null && !history.isEmpty()) {
                     for (Message m : history) {
@@ -127,10 +148,10 @@
                 %>
                     <div class="message-item <%= isMine ? "message-mine" : "" %>" data-id="<%= m.getId() %>">
                         <div class="message-header">
-                            <span class="message-sender"><%= m.getSenderNickname() %></span>
+                            <span class="message-sender"><%= SecurityUtils.escapeHtml(m.getSenderNickname()) %></span>
                             <span class="message-time"><%= m.getCreatedAt() != null ? sdf.format(m.getCreatedAt()) : "" %></span>
                         </div>
-                        <div class="message-text"><%= m.getContent() %></div>
+                        <div class="message-text"><%= SecurityUtils.escapeHtml(m.getContent()) %></div>
                     </div>
                 <%  }
                    } else { %>
@@ -141,7 +162,7 @@
             <% if (!isExpired) { %>
                 <form id="chatForm" class="chat-input-bar">
                     <input type="text" id="contentInput" placeholder="Type your message..." maxlength="2000" autocomplete="off" required>
-                    <button type="submit" class="btn btn-primary">Send</button>
+                    <button type="submit" class="btn btn-primary" id="sendBtn">Send</button>
                 </form>
             <% } else { %>
                 <div style="padding: 1rem; text-align: center; background: #fee2e2; color: #991b1b; font-weight: 600;">
@@ -158,45 +179,65 @@
         const chatContainer = document.getElementById("chatMessages");
         const chatForm = document.getElementById("chatForm");
         const contentInput = document.getElementById("contentInput");
+        const sendBtn = document.getElementById("sendBtn");
+        const chatError = document.getElementById("chatError");
         const contextPath = "${pageContext.request.contextPath}";
+        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || "";
+
+        function showError(msg) {
+            if (!chatError) return;
+            chatError.textContent = msg;
+            chatError.style.display = "block";
+            setTimeout(() => { chatError.style.display = "none"; }, 5000);
+        }
 
         function scrollToBottom() {
             if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
         }
         scrollToBottom();
 
-        // Send message via AJAX POST
+        // Send message via AJAX POST - preserves draft on failure
         if (chatForm) {
             chatForm.addEventListener("submit", async function(e) {
                 e.preventDefault();
                 const content = contentInput.value.trim();
                 if (!content) return;
 
-                contentInput.value = "";
+                sendBtn.disabled = true;
+
                 try {
+                    const bodyParams = new URLSearchParams();
+                    bodyParams.append("roomId", roomId);
+                    bodyParams.append("content", content);
+                    bodyParams.append("csrfToken", csrfToken);
+
                     const res = await fetch(contextPath + "/messages", {
                         method: "POST",
                         headers: {
                             "Content-Type": "application/x-www-form-urlencoded",
                             "Accept": "application/json",
-                            "X-Requested-With": "XMLHttpRequest"
+                            "X-Requested-With": "XMLHttpRequest",
+                            "X-CSRF-Token": csrfToken
                         },
-                        body: "roomId=" + encodeURIComponent(roomId) + "&content=" + encodeURIComponent(content)
+                        body: bodyParams.toString()
                     });
 
                     if (res.ok) {
+                        contentInput.value = ""; // Clear draft ONLY on success
                         pollMessages();
                     } else {
-                        const err = await res.json();
-                        alert("Error: " + (err.error || "Could not send message"));
+                        const err = await res.json().catch(() => ({}));
+                        showError(err.error || "Could not send message. Please try again.");
                     }
                 } catch (err) {
-                    console.error("Failed to send message", err);
+                    showError("Network connection error. Your draft was preserved.");
+                } finally {
+                    sendBtn.disabled = false;
                 }
             });
         }
 
-        // Poll messages roughly every 3 seconds
+        // Poll messages roughly every 3 seconds using textContent
         async function pollMessages() {
             try {
                 const res = await fetch(contextPath + "/api/messages?roomId=" + roomId + "&afterId=" + lastMessageId);
@@ -231,7 +272,7 @@
 
                             const body = document.createElement("div");
                             body.className = "message-text";
-                            body.textContent = msg.content; // Safe DOM text rendering
+                            body.textContent = msg.content; // Strict textContent rendering
 
                             div.appendChild(header);
                             div.appendChild(body);
@@ -242,12 +283,12 @@
                     scrollToBottom();
                 }
             } catch (err) {
-                console.error("Polling error", err);
+                // Polling error handled gracefully
             }
         }
 
-        setInterval(pollMessages, 3000);
+        const pollTimer = setInterval(pollMessages, 3000);
+        window.addEventListener("beforeunload", () => clearInterval(pollTimer));
     </script>
 </body>
 </html>
-

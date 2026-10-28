@@ -1,6 +1,7 @@
 package com.campusverse.servlet;
 
 import com.campusverse.model.Message;
+import com.campusverse.model.Student;
 import com.campusverse.service.ChatService;
 import com.campusverse.util.SecurityUtils;
 import jakarta.servlet.ServletException;
@@ -8,6 +9,7 @@ import jakarta.servlet.annotation.WebServlet;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpSession;
 
 import java.io.IOException;
 import java.sql.SQLException;
@@ -27,6 +29,15 @@ public class MessageApiServlet extends HttpServlet {
             throws ServletException, IOException {
         response.setContentType("application/json;charset=UTF-8");
         response.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+
+        // Enforce active student session for chat message polling
+        HttpSession session = request.getSession(false);
+        Student current = (session != null) ? (Student) session.getAttribute("currentStudent") : null;
+        if (current == null || current.getId() == null) {
+            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+            response.getWriter().write("{\"error\":\"Unauthorized: Active session required\"}");
+            return;
+        }
 
         String roomIdParam = request.getParameter("roomId");
         String afterIdParam = request.getParameter("afterId");
@@ -75,4 +86,3 @@ public class MessageApiServlet extends HttpServlet {
         }
     }
 }
-

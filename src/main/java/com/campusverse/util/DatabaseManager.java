@@ -164,7 +164,7 @@ public class DatabaseManager {
 
     private static void seedDefaultInterests(Connection conn) throws SQLException {
         String[] defaultInterests = {
-            "Java", "Python", "DSA", "Web Development", "UI/UX", "Hackathons", "Gaming", "Photography", "AI"
+            "Java", "Python", "DSA", "Web Development", "UI/UX", "Hackathons", "Gaming", "Photography", "AI", "DBMS", "React"
         };
         String checkSql = "SELECT COUNT(*) FROM interests WHERE name = ?";
         String insertSql = "INSERT INTO interests (name) VALUES (?)";

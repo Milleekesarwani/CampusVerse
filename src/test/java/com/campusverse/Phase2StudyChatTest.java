@@ -202,12 +202,24 @@ public class Phase2StudyChatTest {
 
         MessageApiServlet apiServlet = new MessageApiServlet();
 
+        HttpSession session = (HttpSession) Proxy.newProxyInstance(
+                HttpSession.class.getClassLoader(),
+                new Class<?>[]{HttpSession.class},
+                (proxy, method, args) -> {
+                    if ("getAttribute".equals(method.getName()) && args != null && "currentStudent".equals(args[0])) {
+                        return student;
+                    }
+                    return null;
+                }
+        );
+
         HttpServletRequest req = (HttpServletRequest) Proxy.newProxyInstance(
                 HttpServletRequest.class.getClassLoader(),
                 new Class<?>[]{HttpServletRequest.class},
                 (proxy, method, args) -> {
                     String name = method.getName();
                     if ("getMethod".equals(name)) return "GET";
+                    if ("getSession".equals(name)) return session;
                     if ("getParameter".equals(name) && args != null) {
                         if ("roomId".equals(args[0])) return String.valueOf(room.getId());
                         if ("afterId".equals(args[0])) return "0";
@@ -239,5 +251,47 @@ public class Phase2StudyChatTest {
         assertTrue(jsonOutput.startsWith("[") && jsonOutput.endsWith("]"), "API response must be a JSON array");
         assertTrue(jsonOutput.contains("senderNickname"));
         assertTrue(jsonOutput.contains("API polling JSON test message"));
+    }
+
+    @Test
+    @Order(7)
+    void testMessageApiServletRejectsUnauthenticatedRequest() throws Exception {
+        Room room = roomDAO.findStudyRooms().get(0);
+        MessageApiServlet apiServlet = new MessageApiServlet();
+
+        HttpServletRequest reqNoSession = (HttpServletRequest) Proxy.newProxyInstance(
+                HttpServletRequest.class.getClassLoader(),
+                new Class<?>[]{HttpServletRequest.class},
+                (proxy, method, args) -> {
+                    String name = method.getName();
+                    if ("getMethod".equals(name)) return "GET";
+                    if ("getSession".equals(name)) return null; // No session
+                    if ("getParameter".equals(name) && args != null) {
+                        if ("roomId".equals(args[0])) return String.valueOf(room.getId());
+                        if ("afterId".equals(args[0])) return "0";
+                    }
+                    return null;
+                }
+        );
+
+        final int[] status = new int[1];
+        StringWriter sw = new StringWriter();
+        PrintWriter pw = new PrintWriter(sw);
+
+        HttpServletResponse resp = (HttpServletResponse) Proxy.newProxyInstance(
+                HttpServletResponse.class.getClassLoader(),
+                new Class<?>[]{HttpServletResponse.class},
+                (proxy, method, args) -> {
+                    String name = method.getName();
+                    if ("setStatus".equals(name) && args != null) status[0] = (int) args[0];
+                    if ("getWriter".equals(name)) return pw;
+                    return null;
+                }
+        );
+
+        apiServlet.service(reqNoSession, resp);
+
+        assertEquals(401, status[0], "MessageApiServlet must return 401 when unauthenticated");
+        assertTrue(sw.toString().contains("Unauthorized: Active session required"));
     }
 }

@@ -1,6 +1,7 @@
 <%@ page contentType="text/html;charset=UTF-8" language="java" %>
 <%@ page import="com.campusverse.model.Doubt" %>
 <%@ page import="com.campusverse.model.Student" %>
+<%@ page import="com.campusverse.util.SecurityUtils" %>
 <%@ page import="java.util.List" %>
 <%@ page import="java.text.SimpleDateFormat" %>
 <%
@@ -8,12 +9,18 @@
     String currentSubject = (String) request.getAttribute("currentSubject");
     Student currentStudent = (Student) request.getAttribute("currentStudent");
     SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm");
+    String studentName = currentStudent != null ? SecurityUtils.escapeHtml(currentStudent.getNickname()) : "Student";
+    String csrfToken = (String) request.getAttribute("csrfToken");
+    if (csrfToken == null && session != null) {
+        csrfToken = (String) session.getAttribute("csrfToken");
+    }
 %>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="<%= csrfToken != null ? SecurityUtils.escapeHtml(csrfToken) : "" %>">
     <title>DoubtDrop - CampusVerse Lite</title>
     <link rel="stylesheet" href="${pageContext.request.contextPath}/css/style.css">
     <style>
@@ -66,7 +73,7 @@
     <header class="app-header">
         <div class="container navbar">
             <div class="brand">
-                <a href="${pageContext.request.contextPath}/dashboard" class="logo-link">CampusVerse Lite</a>
+                <a href="${pageContext.request.contextPath}/home" class="logo-link">CampusVerse Lite</a>
             </div>
             <nav class="nav-links">
                 <a href="${pageContext.request.contextPath}/dashboard">Dashboard</a>
@@ -75,7 +82,7 @@
                 <a href="${pageContext.request.contextPath}/ghostrooms">GhostRooms</a>
             </nav>
             <div class="user-badge">
-                <span>👤 <strong><%= currentStudent != null ? currentStudent.getNickname() : "Student" %></strong></span>
+                <span>👤 <strong><%= studentName %></strong></span>
                 <a href="${pageContext.request.contextPath}/dashboard" class="btn btn-sm btn-outline">Dashboard</a>
             </div>
         </div>
@@ -86,10 +93,10 @@
         <p style="color: var(--text-muted); margin-bottom: 1.5rem;">Ask academic questions, collaborate on answers, and track resolutions.</p>
 
         <% if (request.getParameter("error") != null) { %>
-            <div class="alert alert-danger"><%= request.getParameter("error") %></div>
+            <div class="alert alert-danger"><%= SecurityUtils.escapeHtml(request.getParameter("error")) %></div>
         <% } %>
         <% if (request.getParameter("msg") != null) { %>
-            <div class="alert alert-success"><%= request.getParameter("msg") %></div>
+            <div class="alert alert-success"><%= SecurityUtils.escapeHtml(request.getParameter("msg")) %></div>
         <% } %>
 
         <div class="dashboard-grid">
@@ -109,16 +116,16 @@
                         for (Doubt d : doubts) { %>
                             <div class="doubt-item">
                                 <div>
-                                    <a href="${pageContext.request.contextPath}/doubts?id=<%= d.getId() %>" class="doubt-title"><%= d.getTitle() %></a>
+                                    <a href="${pageContext.request.contextPath}/doubts?id=<%= d.getId() %>" class="doubt-title"><%= SecurityUtils.escapeHtml(d.getTitle()) %></a>
                                     <div class="doubt-meta">
-                                        <span>Subject: <strong><%= d.getSubject() %></strong></span>
-                                        <span>By: <strong><%= d.getAuthorNickname() %></strong></span>
+                                        <span>Subject: <strong><%= SecurityUtils.escapeHtml(d.getSubject()) %></strong></span>
+                                        <span>By: <strong><%= SecurityUtils.escapeHtml(d.getAuthorNickname()) %></strong></span>
                                         <span><%= d.getCreatedAt() != null ? sdf.format(d.getCreatedAt()) : "" %></span>
                                     </div>
                                 </div>
                                 <div>
                                     <span class="badge <%= d.isResolved() ? "badge-resolved" : "badge-open" %>">
-                                        <%= d.getStatus() %>
+                                        <%= SecurityUtils.escapeHtml(d.getStatus()) %>
                                     </span>
                                 </div>
                             </div>
@@ -135,6 +142,7 @@
                     <h3>✍️ Ask a Question</h3>
                     <form action="${pageContext.request.contextPath}/doubts" method="post" style="margin-top: 1rem;">
                         <input type="hidden" name="action" value="create">
+                        <input type="hidden" name="csrfToken" value="<%= csrfToken != null ? SecurityUtils.escapeHtml(csrfToken) : "" %>">
                         <div class="form-group">
                             <label for="subject">Subject:</label>
                             <select id="subject" name="subject" required>
@@ -166,4 +174,3 @@
     </footer>
 </body>
 </html>
-

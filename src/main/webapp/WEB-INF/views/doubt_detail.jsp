@@ -2,19 +2,26 @@
 <%@ page import="com.campusverse.model.Doubt" %>
 <%@ page import="com.campusverse.model.DoubtAnswer" %>
 <%@ page import="com.campusverse.model.Student" %>
+<%@ page import="com.campusverse.util.SecurityUtils" %>
 <%@ page import="java.text.SimpleDateFormat" %>
 <%
     Doubt doubt = (Doubt) request.getAttribute("doubt");
     Student currentStudent = (Student) request.getAttribute("currentStudent");
     SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm");
     boolean isAuthor = doubt != null && currentStudent != null && currentStudent.getId().equals(doubt.getStudentId());
+    String studentName = currentStudent != null ? SecurityUtils.escapeHtml(currentStudent.getNickname()) : "Student";
+    String csrfToken = (String) request.getAttribute("csrfToken");
+    if (csrfToken == null && session != null) {
+        csrfToken = (String) session.getAttribute("csrfToken");
+    }
 %>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><%= doubt != null ? doubt.getTitle() : "Doubt" %> - CampusVerse Lite</title>
+    <meta name="csrf-token" content="<%= csrfToken != null ? SecurityUtils.escapeHtml(csrfToken) : "" %>">
+    <title><%= doubt != null ? SecurityUtils.escapeHtml(doubt.getTitle()) : "Doubt" %> - CampusVerse Lite</title>
     <link rel="stylesheet" href="${pageContext.request.contextPath}/css/style.css">
     <style>
         .detail-card {
@@ -42,7 +49,7 @@
     <header class="app-header">
         <div class="container navbar">
             <div class="brand">
-                <a href="${pageContext.request.contextPath}/dashboard" class="logo-link">CampusVerse Lite</a>
+                <a href="${pageContext.request.contextPath}/home" class="logo-link">CampusVerse Lite</a>
             </div>
             <nav class="nav-links">
                 <a href="${pageContext.request.contextPath}/dashboard">Dashboard</a>
@@ -51,7 +58,7 @@
                 <a href="${pageContext.request.contextPath}/ghostrooms">GhostRooms</a>
             </nav>
             <div class="user-badge">
-                <span>👤 <strong><%= currentStudent != null ? currentStudent.getNickname() : "Student" %></strong></span>
+                <span>👤 <strong><%= studentName %></strong></span>
                 <a href="${pageContext.request.contextPath}/doubts" class="btn btn-sm btn-outline">&larr; All Doubts</a>
             </div>
         </div>
@@ -59,35 +66,36 @@
 
     <main class="container">
         <% if (request.getParameter("error") != null) { %>
-            <div class="alert alert-danger"><%= request.getParameter("error") %></div>
+            <div class="alert alert-danger"><%= SecurityUtils.escapeHtml(request.getParameter("error")) %></div>
         <% } %>
         <% if (request.getParameter("msg") != null) { %>
-            <div class="alert alert-success"><%= request.getParameter("msg") %></div>
+            <div class="alert alert-success"><%= SecurityUtils.escapeHtml(request.getParameter("msg")) %></div>
         <% } %>
 
         <% if (doubt != null) { %>
             <div class="detail-card">
                 <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom: 1rem;">
                     <div>
-                        <span class="badge" style="background:#e0e7ff; color:#3730a3; margin-bottom: 0.5rem;"><%= doubt.getSubject() %></span>
-                        <h2><%= doubt.getTitle() %></h2>
+                        <span class="badge" style="background:#e0e7ff; color:#3730a3; margin-bottom: 0.5rem;"><%= SecurityUtils.escapeHtml(doubt.getSubject()) %></span>
+                        <h2><%= SecurityUtils.escapeHtml(doubt.getTitle()) %></h2>
                         <div style="font-size:0.85rem; color: var(--text-muted); margin-top: 0.25rem;">
-                            Posted by <strong><%= doubt.getAuthorNickname() %></strong> on <%= doubt.getCreatedAt() != null ? sdf.format(doubt.getCreatedAt()) : "" %>
+                            Posted by <strong><%= SecurityUtils.escapeHtml(doubt.getAuthorNickname()) %></strong> on <%= doubt.getCreatedAt() != null ? sdf.format(doubt.getCreatedAt()) : "" %>
                         </div>
                     </div>
                     <div>
                         <span class="badge <%= doubt.isResolved() ? "badge-resolved" : "badge-open" %>">
-                            <%= doubt.getStatus() %>
+                            <%= SecurityUtils.escapeHtml(doubt.getStatus()) %>
                         </span>
                     </div>
                 </div>
 
-                <div style="margin: 1.5rem 0; line-height: 1.6; white-space: pre-wrap; font-size: 1.05rem;"><%= doubt.getDescription() %></div>
+                <div style="margin: 1.5rem 0; line-height: 1.6; white-space: pre-wrap; font-size: 1.05rem;"><%= SecurityUtils.escapeHtml(doubt.getDescription()) %></div>
 
                 <% if (isAuthor && !doubt.isResolved()) { %>
                     <form action="${pageContext.request.contextPath}/doubts" method="post" style="margin-top: 1rem;">
                         <input type="hidden" name="action" value="resolve">
                         <input type="hidden" name="doubtId" value="<%= doubt.getId() %>">
+                        <input type="hidden" name="csrfToken" value="<%= csrfToken != null ? SecurityUtils.escapeHtml(csrfToken) : "" %>">
                         <button type="submit" class="btn btn-primary">✅ Mark as RESOLVED</button>
                     </form>
                 <% } %>
@@ -100,9 +108,9 @@
                     for (DoubtAnswer a : doubt.getAnswers()) { %>
                         <div class="answer-item">
                             <div class="answer-meta">
-                                <strong><%= a.getAuthorNickname() %></strong> answered on <%= a.getCreatedAt() != null ? sdf.format(a.getCreatedAt()) : "" %>:
+                                <strong><%= SecurityUtils.escapeHtml(a.getAuthorNickname()) %></strong> answered on <%= a.getCreatedAt() != null ? sdf.format(a.getCreatedAt()) : "" %>:
                             </div>
-                            <div style="white-space: pre-wrap;"><%= a.getAnswerText() %></div>
+                            <div style="white-space: pre-wrap;"><%= SecurityUtils.escapeHtml(a.getAnswerText()) %></div>
                         </div>
                 <%  }
                    } else { %>
@@ -115,6 +123,7 @@
                 <h4>Your Answer</h4>
                 <form action="${pageContext.request.contextPath}/doubts/answer" method="post" style="margin-top: 1rem;">
                     <input type="hidden" name="doubtId" value="<%= doubt.getId() %>">
+                    <input type="hidden" name="csrfToken" value="<%= csrfToken != null ? SecurityUtils.escapeHtml(csrfToken) : "" %>">
                     <div class="form-group">
                         <textarea name="answerText" rows="4" required placeholder="Type your helpful explanation or solution..."></textarea>
                     </div>
@@ -131,4 +140,3 @@
     </footer>
 </body>
 </html>
-

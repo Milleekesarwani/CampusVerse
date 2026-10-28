@@ -1,20 +1,26 @@
 <%@ page contentType="text/html;charset=UTF-8" language="java" %>
 <%@ page import="com.campusverse.model.Room" %>
 <%@ page import="com.campusverse.model.Student" %>
+<%@ page import="com.campusverse.util.SecurityUtils" %>
 <%@ page import="java.util.List" %>
 <%@ page import="java.text.SimpleDateFormat" %>
-<%@ page import="java.time.Instant" %>
 <%
     Student currentStudent = (Student) request.getAttribute("currentStudent");
     List<Room> ghostRooms = (List<Room>) request.getAttribute("ghostRooms");
     SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
     long nowMillis = System.currentTimeMillis();
+    String studentName = currentStudent != null ? SecurityUtils.escapeHtml(currentStudent.getNickname()) : "Student";
+    String csrfToken = (String) request.getAttribute("csrfToken");
+    if (csrfToken == null && session != null) {
+        csrfToken = (String) session.getAttribute("csrfToken");
+    }
 %>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="<%= csrfToken != null ? SecurityUtils.escapeHtml(csrfToken) : "" %>">
     <title>GhostRooms - CampusVerse Lite</title>
     <link rel="stylesheet" href="${pageContext.request.contextPath}/css/style.css">
     <style>
@@ -39,7 +45,7 @@
     <header class="app-header">
         <div class="container navbar">
             <div class="brand">
-                <a href="${pageContext.request.contextPath}/dashboard" class="logo-link">CampusVerse Lite</a>
+                <a href="${pageContext.request.contextPath}/home" class="logo-link">CampusVerse Lite</a>
             </div>
             <nav class="nav-links">
                 <a href="${pageContext.request.contextPath}/dashboard">Dashboard</a>
@@ -48,7 +54,7 @@
                 <a href="${pageContext.request.contextPath}/ghostrooms" class="active">GhostRooms</a>
             </nav>
             <div class="user-badge">
-                <span>👤 <strong><%= currentStudent != null ? currentStudent.getNickname() : "Student" %></strong></span>
+                <span>👤 <strong><%= studentName %></strong></span>
                 <a href="${pageContext.request.contextPath}/dashboard" class="btn btn-sm btn-outline">Dashboard</a>
             </div>
         </div>
@@ -61,10 +67,10 @@
         </p>
 
         <% if (request.getParameter("error") != null) { %>
-            <div class="alert alert-danger"><%= request.getParameter("error") %></div>
+            <div class="alert alert-danger"><%= SecurityUtils.escapeHtml(request.getParameter("error")) %></div>
         <% } %>
         <% if (request.getParameter("msg") != null) { %>
-            <div class="alert alert-success"><%= request.getParameter("msg") %></div>
+            <div class="alert alert-success"><%= SecurityUtils.escapeHtml(request.getParameter("msg")) %></div>
         <% } %>
 
         <div class="dashboard-grid">
@@ -80,7 +86,7 @@
                     %>
                         <div class="ghost-card">
                             <div>
-                                <h4 style="font-size: 1.1rem; margin-bottom: 0.25rem;"><%= r.getName() %></h4>
+                                <h4 style="font-size: 1.1rem; margin-bottom: 0.25rem;"><%= SecurityUtils.escapeHtml(r.getName()) %></h4>
                                 <div style="font-size: 0.85rem; color: var(--text-muted);">
                                     Created: <%= r.getCreatedAt() != null ? sdf.format(r.getCreatedAt()) : "" %> &bull;
                                     Expires: <%= r.getExpiresAt() != null ? sdf.format(r.getExpiresAt()) : "N/A" %>
@@ -112,6 +118,7 @@
                     <h3>⚡ Spawn GhostRoom</h3>
                     <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1rem;">Choose a duration. The room will accept messages until expiry.</p>
                     <form action="${pageContext.request.contextPath}/ghostrooms" method="post">
+                        <input type="hidden" name="csrfToken" value="<%= csrfToken != null ? SecurityUtils.escapeHtml(csrfToken) : "" %>">
                         <div class="form-group">
                             <label for="roomName">Room Topic / Name:</label>
                             <input type="text" id="roomName" name="name" required maxlength="100" placeholder="e.g. Java Exam Cram Session">
@@ -139,4 +146,3 @@
     </footer>
 </body>
 </html>
-

@@ -3,6 +3,7 @@ package com.campusverse.servlet;
 import com.campusverse.dao.StudentDAO;
 import com.campusverse.model.Interest;
 import com.campusverse.model.Student;
+import com.campusverse.util.SecurityFilter;
 import com.campusverse.util.SecurityUtils;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.annotation.WebServlet;
@@ -15,6 +16,7 @@ import java.io.IOException;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -120,10 +122,34 @@ public class StudentServlet extends HttpServlet {
 
         try {
             Student student = studentDAO.findOrCreateByNickname(nickname);
+
+            // Rotate session ID to protect against session fixation attacks
+            HttpSession oldSession = request.getSession(false);
+            if (oldSession != null) {
+                try {
+                    request.changeSessionId();
+                } catch (Throwable t) {
+                    oldSession.invalidate();
+                }
+            }
             HttpSession session = request.getSession(true);
             session.setAttribute("currentStudent", student);
             session.setAttribute("studentId", student.getId());
             session.setAttribute("nickname", student.getNickname());
+
+            // Generate fresh CSRF token upon authentication
+            String newCsrf = UUID.randomUUID().toString();
+            session.setAttribute(SecurityFilter.CSRF_TOKEN_ATTR, newCsrf);
+
+            String accept = request.getHeader("Accept");
+            boolean isJson = "true".equalsIgnoreCase(request.getParameter("json")) || (accept != null && accept.contains("application/json"));
+            if (isJson) {
+                response.setContentType("application/json;charset=UTF-8");
+                response.getWriter().write(String.format("{\"success\":true,\"nickname\":\"%s\",\"csrfToken\":\"%s\"}",
+                        SecurityUtils.escapeJson(student.getNickname()), newCsrf));
+                return;
+            }
+
             response.sendRedirect(request.getContextPath() + "/dashboard");
         } catch (IllegalArgumentException e) {
             response.sendRedirect(request.getContextPath() + "/home?error=" + urlEncode(e.getMessage()));

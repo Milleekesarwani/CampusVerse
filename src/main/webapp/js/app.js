@@ -1,8 +1,16 @@
 /**
  * CampusVerse Lite - Frontend Application
  * Fully integrated Single Page Application (SPA) with Java Jakarta EE Backend.
+ * Uses real database-backed state, CSRF protection, and secure textContent rendering.
  */
 
+// Context and CSRF setup
+const ctx = window.APP_CONTEXT || '';
+function getCsrfToken() {
+    return window.CSRF_TOKEN || document.querySelector('meta[name="csrf-token"]')?.content || '';
+}
+
+// Selector & Sanitization utilities
 const $ = s => document.querySelector(s);
 const $$ = s => document.querySelectorAll(s);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
@@ -13,39 +21,72 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
     "'": '&#39;'
 }[c]));
 
-const ctx = window.APP_CONTEXT || '';
+function initials(nameStr) {
+    if (!nameStr) return 'ST';
+    const clean = nameStr.replace(/_/g, ' ').trim();
+    const parts = clean.split(/\s+/);
+    if (parts.length >= 2 && parts[0] && parts[1]) {
+        return (parts[0][0] + parts[1][0]).toUpperCase();
+    }
+    return clean.substring(0, Math.min(2, clean.length)).toUpperCase();
+}
 
-// Default application state
-const defaults = {
+// Form-encoded API helper with CSRF protection
+async function apiPost(url, params = {}) {
+    const token = getCsrfToken();
+    const urlParams = new URLSearchParams();
+    for (const [key, val] of Object.entries(params)) {
+        if (Array.isArray(val)) {
+            val.forEach(v => urlParams.append(key, v));
+        } else if (val !== null && val !== undefined) {
+            urlParams.append(key, val);
+        }
+    }
+    urlParams.set('csrfToken', token);
+
+    return fetch(url, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+            'X-CSRF-Token': token
+        },
+        body: urlParams.toString()
+    });
+}
+
+// Global Application State (backed by server database)
+const state = {
     profile: {
-        name: (window.INITIAL_STUDENT && window.INITIAL_STUDENT.name) || 'Milee Kesarwani',
-        interests: ['Java', 'DSA', 'Hackathons']
+        id: (window.INITIAL_STUDENT && window.INITIAL_STUDENT.id) || null,
+        name: (window.INITIAL_STUDENT && window.INITIAL_STUDENT.name) || 'Student',
+        interests: []
     },
-    messages: {},
-    connections: [],
-    ghosts: [],
-    doubts: []
+    allInterests: ['Java', 'DSA', 'UI/UX', 'React', 'Hackathons', 'Gaming', 'DBMS', 'Python'],
+    studyRooms: [],
+    ghostRooms: [],
+    doubts: [],
+    matches: [],
+    messages: {}, // roomId -> array of message objects
+    savedCircle: [] // UI preference: peer IDs saved locally
 };
 
-let state;
+// Load saved UI preferences from localStorage
 try {
-    state = { ...defaults, ...JSON.parse(localStorage.getItem('campusverse-v1') || '{}') };
-    if (!state.profile || !state.profile.name) {
-        state.profile = defaults.profile;
-    }
-} catch {
-    state = structuredClone(defaults);
+    const pref = JSON.parse(localStorage.getItem('campusverse-saved-circle') || '[]');
+    if (Array.isArray(pref)) state.savedCircle = pref;
+} catch (e) {
+    state.savedCircle = [];
 }
 
-function save() {
+function saveUiPref() {
     try {
-        localStorage.setItem('campusverse-v1', JSON.stringify(state));
-    } catch (e) {
-        console.warn('LocalStorage error:', e);
-    }
+        localStorage.setItem('campusverse-saved-circle', JSON.stringify(state.savedCircle));
+    } catch (e) {}
 }
 
-// Navigation & route definitions
+// Navigation definitions
 const navs = [
     ['home', '▦', 'Overview'],
     ['chat', '▤', 'Study Chat'],
@@ -54,123 +95,16 @@ const navs = [
     ['doubts', '◈', 'DoubtDrop']
 ];
 
-const interests = ['Java', 'DSA', 'UI/UX', 'React', 'Hackathons', 'Gaming', 'DBMS', 'Python'];
 const subjects = ['DSA', 'Java', 'DBMS', 'General'];
 
 let current = 'home';
-let room = 'DSA';
-let ghostId = null;
-let filter = 'All';
-let search = '';
+let activeRoomId = null;
+let activeRoomName = 'Java';
+let isGhostRoom = false;
+let doubtFilter = 'All';
+let doubtSearch = '';
+let chatPollTimer = null;
 let lastPolledMessageId = 0;
-let roomMap = { 'Java': 1, 'DSA': 2, 'DBMS': 3, 'General': 4 };
-
-// Reference peers for VibeMatch
-const peers = [
-    {
-        name: 'Aman Sharma',
-        initials: 'AS',
-        color: 'peach',
-        interests: ['Java', 'React', 'Hackathons'],
-        bio: 'Building things. Breaking things. Learning both ways.',
-        year: 'CSE · 2nd year'
-    },
-    {
-        name: 'Riya Verma',
-        initials: 'RV',
-        color: 'pink',
-        interests: ['Java', 'DSA', 'Hackathons'],
-        bio: 'One more problem before I call it a day.',
-        year: 'CSE · 2nd year'
-    },
-    {
-        name: 'Kabir Singh',
-        initials: 'KS',
-        color: 'blue',
-        interests: ['UI/UX', 'React', 'Gaming'],
-        bio: 'Good interfaces and late-night gaming sessions.',
-        year: 'CSE · 3rd year'
-    },
-    {
-        name: 'Ananya Das',
-        initials: 'AD',
-        color: 'lime',
-        interests: ['DBMS', 'Python', 'DSA'],
-        bio: 'Turning confusing concepts into little diagrams.',
-        year: 'CSE · 2nd year'
-    }
-];
-
-// Seed doubts for initial exploration
-const seedDoubts = [
-    {
-        id: 'seed1',
-        subject: 'Java',
-        title: 'Can someone explain method overloading with a real-life example?',
-        body: 'I understand the syntax, but when should I use it instead of creating a new method?',
-        author: 'Riya Verma',
-        resolved: false,
-        replies: [
-            {
-                author: 'Aman Sharma',
-                text: 'Use overloading when the operation is the same but the input differs — like add(int, int) and add(double, double). Java picks the method from argument types.'
-            }
-        ]
-    },
-    {
-        id: 'seed2',
-        subject: 'DBMS',
-        title: 'A simple way to remember 2NF vs 3NF?',
-        body: 'Partial and transitive dependencies keep getting mixed up in my head. Any good examples?',
-        author: 'Ananya Das',
-        resolved: false,
-        replies: []
-    },
-    {
-        id: 'seed3',
-        subject: 'DSA',
-        title: 'Why is binary search O(log n)?',
-        body: 'What happens to the search space in each step?',
-        author: 'Kabir Singh',
-        resolved: true,
-        replies: [
-            {
-                author: 'Riya Verma',
-                text: 'Each comparison halves the search space. After k steps, n / 2^k = 1, so k = log₂(n).'
-            }
-        ]
-    }
-];
-
-let baseTime = Number(localStorage.getItem('campusverse-start')) || Date.now();
-localStorage.setItem('campusverse-start', baseTime);
-
-function allGhosts() {
-    const defaultsGhosts = [
-        { id: 'dbms', title: 'DBMS: the last-minute club', topic: 'Normalization, SQL & a little moral support.', subject: 'DBMS', expires: baseTime + 7200000, members: 8 },
-        { id: 'algo', title: 'Two pointers, one brain cell', topic: 'Let’s work through the DSA practice sheet.', subject: 'DSA', expires: baseTime + 14400000, members: 5 },
-        { id: 'hack', title: 'Hackathon idea jam', topic: 'No bad ideas. Just bring your curiosity.', subject: 'General', expires: baseTime + 28800000, members: 6 }
-    ];
-    return [...state.ghosts, ...defaultsGhosts];
-}
-
-function allDoubts() {
-    return [
-        ...state.doubts,
-        ...seedDoubts.map(d => ({ ...d, ...(state['doubt-' + d.id] || {}) }))
-    ];
-}
-
-function updateDoubt(d) {
-    if (String(d.id).startsWith('seed')) {
-        state['doubt-' + d.id] = d;
-    } else {
-        const idx = state.doubts.findIndex(x => x.id === d.id);
-        if (idx >= 0) state.doubts[idx] = d;
-        else state.doubts.unshift(d);
-    }
-    save();
-}
 
 function toast(text) {
     const el = $('#toast');
@@ -178,20 +112,7 @@ function toast(text) {
     el.textContent = text;
     el.classList.add('show');
     clearTimeout(window.tt);
-    window.tt = setTimeout(() => el.classList.remove('show'), 3000);
-}
-
-function initials(nameStr) {
-    if (!nameStr) return 'ST';
-    const parts = nameStr.trim().split(/\s+/);
-    if (parts.length >= 2) {
-        return (parts[0][0] + parts[1][0]).toUpperCase();
-    }
-    return nameStr.substring(0, 2).toUpperCase();
-}
-
-function name() {
-    return state.profile.name || 'Milee Kesarwani';
+    window.tt = setTimeout(() => el.classList.remove('show'), 3500);
 }
 
 function heading(title, sub, action = '') {
@@ -207,9 +128,18 @@ function heading(title, sub, action = '') {
     `;
 }
 
+// ----------------------------------------------------
+// ROUTING & RENDERING
+// ----------------------------------------------------
 function navigate(page) {
+    if (current === 'chat' && page !== 'chat') {
+        stopChatPolling();
+    }
     current = page;
     location.hash = page;
+    try {
+        localStorage.setItem('campusverse-pref-tab', page);
+    } catch (e) {}
     render();
     window.scrollTo(0, 0);
 }
@@ -227,7 +157,7 @@ function render() {
         `).join('');
     }
 
-    // Breadcrumb and profile avatars
+    // Breadcrumb and headers
     const crumb = $('#crumb');
     if (crumb) {
         crumb.textContent = navs.find(x => x[0] === current)?.[2] ||
@@ -235,9 +165,9 @@ function render() {
     }
 
     const userNameEl = $('#user-name');
-    if (userNameEl) userNameEl.textContent = name();
+    if (userNameEl) userNameEl.textContent = state.profile.name;
 
-    const currentInitials = initials(name());
+    const currentInitials = initials(state.profile.name);
     const headerAvatar = $('.header-right .avatar') || $('.header-avatar');
     if (headerAvatar) headerAvatar.textContent = currentInitials;
 
@@ -246,34 +176,40 @@ function render() {
 
     // View router
     const views = {
-        home: home,
-        chat: chat,
-        match: match,
-        ghost: ghosts,
-        doubts: doubts,
-        profile: profile,
-        saved: saved
+        home: renderHome,
+        chat: renderChat,
+        match: renderMatch,
+        ghost: renderGhosts,
+        doubts: renderDoubts,
+        profile: renderProfile,
+        saved: renderSaved
     };
 
     const mainEl = $('#main');
     if (mainEl) {
-        mainEl.innerHTML = (views[current] || home)();
+        mainEl.innerHTML = (views[current] || renderHome)();
     }
 
+    // Post-render lifecycle hooks
     if (current === 'chat') {
-        const msgsEl = $('.messages');
+        const msgsEl = $('#chat-messages');
         if (msgsEl) msgsEl.scrollTop = msgsEl.scrollHeight;
-        syncRoomMessages();
+        startChatPolling();
     }
 }
 
 // ----------------------------------------------------
 // VIEW: Home (Overview)
 // ----------------------------------------------------
-function home() {
-    const firstName = esc(name().split(' ')[0]);
-    const liveGhostCount = allGhosts().filter(g => g.expires > Date.now()).length;
-    const openDoubtsCount = allDoubts().filter(d => !d.resolved).length;
+function renderHome() {
+    const firstName = esc(state.profile.name.split(' ')[0]);
+    const liveGhostCount = state.ghostRooms.filter(g => !g.expired && g.expires > Date.now()).length;
+    const openDoubtsCount = state.doubts.filter(d => !d.resolved).length;
+    const roomsCount = state.studyRooms.length || 4;
+    const peersCount = state.matches.length;
+
+    // Pick top open doubt for teaser
+    const topDoubt = state.doubts.find(d => !d.resolved);
 
     return heading(
         `Hey ${firstName}, find your people <span style="color:#acb77a">✳</span>`,
@@ -300,11 +236,11 @@ function home() {
         <section class="stats">
             <div class="stat">
                 <span class="stat-icon">♧</span>
-                <div><b>04</b><small>Study rooms</small></div>
+                <div><b>${String(roomsCount).padStart(2, '0')}</b><small>Study rooms</small></div>
             </div>
             <div class="stat">
                 <span class="stat-icon">✳</span>
-                <div><b>04</b><small>People to discover</small></div>
+                <div><b>${String(peersCount).padStart(2, '0')}</b><small>People to discover</small></div>
             </div>
             <div class="stat">
                 <span class="stat-icon">◈</span>
@@ -330,7 +266,7 @@ function home() {
                 <h3>Study Chat</h3>
                 <p>Big questions. Small study circles.<br>Learn better, together.</p>
                 <div class="feature-bottom">
-                    <span>4 subject rooms</span>
+                    <span>${roomsCount} subject rooms</span>
                     <span>↗</span>
                 </div>
             </button>
@@ -371,45 +307,20 @@ function home() {
                     <button class="text-link" onclick="navigate('chat')">View all rooms ↗</button>
                 </div>
                 <div class="panel">
-                    <div class="room-row">
-                        <span class="room-icon">⌘</span>
-                        <div class="room-info">
-                            <b>Data Structures & Algorithms</b>
-                            <p><i></i> Binary trees & better understanding</p>
+                    ${(state.studyRooms.length ? state.studyRooms : [
+                        { id: 1, name: 'Java' },
+                        { id: 2, name: 'DSA' },
+                        { id: 3, name: 'DBMS' }
+                    ]).map(r => `
+                        <div class="room-row">
+                            <span class="room-icon">${r.name === 'Java' ? '☕' : r.name === 'DSA' ? '⌘' : '▥'}</span>
+                            <div class="room-info">
+                                <b>${esc(r.name)} Study Circle</b>
+                                <p><i></i> Peer discussions and live learning</p>
+                            </div>
+                            <button class="room-action" onclick="openRoomById(${r.id}, '${esc(r.name)}', false)">Join ↗</button>
                         </div>
-                        <div class="faces">
-                            <span class="avatar peach">AS</span>
-                            <span class="avatar purple">RV</span>
-                            <span class="avatar lime">+12</span>
-                        </div>
-                        <button class="room-action" onclick="openRoom('DSA')">Join ↗</button>
-                    </div>
-                    <div class="room-row">
-                        <span class="room-icon">☕</span>
-                        <div class="room-info">
-                            <b>The Java Junction</b>
-                            <p><i></i> Classes, coffee & conversations</p>
-                        </div>
-                        <div class="faces">
-                            <span class="avatar pink">RV</span>
-                            <span class="avatar blue">KS</span>
-                            <span class="avatar lime">+8</span>
-                        </div>
-                        <button class="room-action" onclick="openRoom('Java')">Join ↗</button>
-                    </div>
-                    <div class="room-row">
-                        <span class="room-icon">▥</span>
-                        <div class="room-info">
-                            <b>DBMS Study Circle</b>
-                            <p><i></i> Making sense of relationships</p>
-                        </div>
-                        <div class="faces">
-                            <span class="avatar lime">AD</span>
-                            <span class="avatar peach">AS</span>
-                            <span class="avatar purple">+6</span>
-                        </div>
-                        <button class="room-action" onclick="openRoom('DBMS')">Join ↗</button>
-                    </div>
+                    `).join('')}
                 </div>
             </section>
 
@@ -419,16 +330,24 @@ function home() {
                     <button class="text-link" onclick="navigate('doubts')">DoubtDrop ↗</button>
                 </div>
                 <div class="panel">
-                    <div class="doubt-teaser">
-                        <span class="chip">Java</span>
-                        <span class="chip green">Open for ideas</span>
-                        <h3>Can someone explain method overloading with a real-life example?</h3>
-                        <div class="doubt-meta">
-                            <span><span class="avatar pink" style="width:20px;height:20px;font-size:7px">RV</span> &nbsp; Riya Verma</span>
-                            <button onclick="viewDoubt('seed1')">1 reply ↗</button>
+                    ${topDoubt ? `
+                        <div class="doubt-teaser">
+                            <span class="chip">${esc(topDoubt.subject)}</span>
+                            <span class="chip green">Open for ideas</span>
+                            <h3>${esc(topDoubt.title)}</h3>
+                            <div class="doubt-meta">
+                                <span><span class="avatar pink" style="width:20px;height:20px;font-size:7px">${esc(initials(topDoubt.author))}</span> &nbsp; ${esc(topDoubt.author)}</span>
+                                <button onclick="viewDoubt(${topDoubt.id})">${(topDoubt.replies || []).length} replies ↗</button>
+                            </div>
                         </div>
-                    </div>
-                    <p class="encourage">Know the answer? <button onclick="viewDoubt('seed1')">Be someone’s lightbulb moment ↗</button></p>
+                        <p class="encourage">Know the answer? <button onclick="viewDoubt(${topDoubt.id})">Be someone’s lightbulb moment ↗</button></p>
+                    ` : `
+                        <div class="empty" style="padding: 30px 10px;">
+                            <p style="margin: 0 0 10px; font-weight: 600;">No open doubts right now.</p>
+                            <small class="muted">Have an academic question? Be the first to ask in DoubtDrop.</small>
+                            <div style="margin-top: 15px;"><button class="primary" onclick="askDoubt()">+ Drop a doubt</button></div>
+                        </div>
+                    `}
                 </div>
             </section>
         </div>
@@ -438,266 +357,305 @@ function home() {
 // ----------------------------------------------------
 // VIEW: Study Chat
 // ----------------------------------------------------
-function openRoom(s, id = null) {
-    room = s;
-    ghostId = id;
+function openRoomById(id, name, isGhost = false) {
+    activeRoomId = Number(id);
+    activeRoomName = name;
+    isGhostRoom = isGhost;
     lastPolledMessageId = 0;
     navigate('chat');
 }
 
-function chat() {
-    let g = ghostId ? allGhosts().find(x => x.id === ghostId) : null;
-    const key = ghostId || room;
-    const msgs = state.messages[key] || [];
-    let expired = g && g.expires <= Date.now();
+function stopChatPolling() {
+    if (chatPollTimer) {
+        clearInterval(chatPollTimer);
+        chatPollTimer = null;
+    }
+}
+
+function startChatPolling() {
+    stopChatPolling();
+    // Immediate initial sync
+    syncCurrentChat();
+    // Poll roughly every 3 seconds while on chat screen
+    chatPollTimer = setInterval(syncCurrentChat, 3000);
+}
+
+function renderChat() {
+    // Select default room if none active
+    if (!activeRoomId && state.studyRooms.length > 0) {
+        activeRoomId = state.studyRooms[0].id;
+        activeRoomName = state.studyRooms[0].name;
+        isGhostRoom = false;
+    }
+
+    let ghost = isGhostRoom ? state.ghostRooms.find(g => Number(g.id) === activeRoomId) : null;
+    let expired = ghost && (ghost.expired || (ghost.expires && ghost.expires <= Date.now()));
+    const msgs = state.messages[activeRoomId] || [];
 
     return heading('A good place to get it.', 'Ask a question, share a thought, or just say hello.') + `
-        <div class="info-banner">Live Chat · Powered by persistent H2 database & cursor polling API. Messages are saved securely on CampusVerse Lite.</div>
+        <div class="info-banner">Live Chat · Connected to persistent H2 database. Polls for updates every 3 seconds with draft preservation and duplicate prevention.</div>
+        <div id="chat-error-banner" style="display:none; padding:10px 14px; background:#fee2e2; color:#991b1b; border-radius:8px; margin-bottom:15px; font-size:12px;"></div>
         <div class="workspace">
             <aside class="panel room-list">
-                ${subjects.map(s => `
-                    <button class="${room === s && !ghostId ? 'active' : ''}" onclick="openRoom('${s}')">
-                        # ${s}
-                        <small>${s === 'General' ? 'The campus common room' : 'Your ' + s + ' study circle'}</small>
+                ${state.studyRooms.map(r => `
+                    <button class="${activeRoomId === r.id && !isGhostRoom ? 'active' : ''}" onclick="openRoomById(${r.id}, '${esc(r.name)}', false)">
+                        # ${esc(r.name)}
+                        <small>${r.name === 'General' ? 'Campus common room' : 'Your ' + esc(r.name) + ' study circle'}</small>
                     </button>
                 `).join('')}
-                ${g ? `
-                    <button class="active">
+
+                ${state.ghostRooms.map(g => `
+                    <button class="${activeRoomId === Number(g.id) && isGhostRoom ? 'active' : ''}" onclick="openRoomById(${g.id}, '${esc(g.title)}', true)">
                         ♧ ${esc(g.title)}
-                        <small>Temporary room</small>
+                        <small>${(g.expired || (g.expires && g.expires <= Date.now())) ? 'Expired GhostRoom' : 'Temporary Room'}</small>
                     </button>
-                ` : ''}
+                `).join('')}
             </aside>
 
             <section class="panel chat-panel">
                 <div class="chat-top">
-                    ${g ? '♧ ' + esc(g.title) : '# ' + room + ' Study Circle'}
-                    <small>${expired ? 'This room has expired. You can still read the conversation.' : 'A little curiosity goes a long way. Be kind, always.'}</small>
+                    ${isGhostRoom ? '♧ ' + esc(activeRoomName) : '# ' + esc(activeRoomName) + ' Study Circle'}
+                    <small>${expired ? 'This GhostRoom has expired. You can still read the conversation.' : 'A little curiosity goes a long way. Be kind, always.'}</small>
                 </div>
 
                 <div class="messages" id="chat-messages">
-                    ${!g && msgs.length === 0 ? `
-                        <div class="message">
-                            <span class="avatar pink">RV</span>
-                            <div>
-                                <b>Riya Verma</b><time>Study peer</time>
-                                <div class="bubble">
-                                    ${room === 'DSA' ? 'Anyone up for working through binary search together? I keep mixing up the boundary conditions.' :
-                                      room === 'Java' ? 'Welcome to the Java Junction! What are you working on today?' :
-                                      room === 'DBMS' ? 'Revision check-in: joins, normalization, or transactions? Where should we start?' :
-                                      'Hey everyone! What’s one thing you learned today?'}
-                                </div>
-                            </div>
-                        </div>
-                        <div class="message">
-                            <span class="avatar peach">AS</span>
-                            <div>
-                                <b>Aman Sharma</b><time>Study peer</time>
-                                <div class="bubble">
-                                    ${room === 'DSA' ? 'I’m in! Start with low = 0 and high = n − 1, and keep going while low ≤ high. Let’s try a small example.' :
-                                      'Happy to help! Drop your questions here and we can figure them out together.'}
-                                </div>
-                            </div>
+                    ${msgs.length === 0 ? `
+                        <div class="empty" id="chat-empty-msg">
+                            No messages yet in this study circle. Start the conversation!
                         </div>
                     ` : ''}
-
-                    ${msgs.map(m => `
-                        <div class="message ${m.author === name() ? 'mine' : ''}">
-                            <span class="avatar ${m.author === name() ? 'lime' : 'purple'}">${esc(initials(m.author))}</span>
-                            <div>
-                                <b>${esc(m.author)}</b><time>${esc(m.time)}</time>
-                                <div class="bubble">${esc(m.text)}</div>
-                            </div>
-                        </div>
-                    `).join('')}
                 </div>
 
                 <form class="compose" onsubmit="sendMessage(event)">
-                    <input name="message" maxlength="2000" aria-label="Message"
-                           placeholder="${expired ? 'This GhostRoom is closed' : 'A question? A thought? Drop it here…'}"
+                    <input name="message" id="chat-compose-input" maxlength="2000" aria-label="Message"
+                           placeholder="${expired ? 'This GhostRoom is closed to new messages' : 'A question? A thought? Drop it here…'}"
                            required ${expired ? 'disabled' : ''} autocomplete="off">
-                    <button class="primary" ${expired ? 'disabled' : ''}>Send ↗</button>
+                    <button class="primary" id="chat-send-btn" ${expired ? 'disabled' : ''}>Send ↗</button>
                 </form>
             </section>
         </div>
     `;
 }
 
+function showChatError(text) {
+    const el = $('#chat-error-banner');
+    if (!el) return;
+    el.textContent = text;
+    el.style.display = 'block';
+    setTimeout(() => { if (el) el.style.display = 'none'; }, 5000);
+}
+
+// Strictly safe textContent-based DOM rendering for chat messages
+function appendMessageToDOM(container, m) {
+    const emptyMsg = $('#chat-empty-msg');
+    if (emptyMsg) emptyMsg.remove();
+
+    const isMine = (m.senderNickname === state.profile.name) || (m.author === state.profile.name);
+    const item = document.createElement('div');
+    item.className = 'message' + (isMine ? ' mine' : '');
+    item.dataset.id = m.id;
+
+    const avatar = document.createElement('span');
+    avatar.className = 'avatar ' + (isMine ? 'lime' : 'purple');
+    avatar.textContent = initials(m.senderNickname || m.author || 'ST');
+
+    const wrapper = document.createElement('div');
+
+    const sender = document.createElement('b');
+    sender.textContent = m.senderNickname || m.author || 'Student';
+
+    const time = document.createElement('time');
+    const timeText = m.createdAt ? m.createdAt.substring(11, 16) : (m.time || '');
+    time.textContent = timeText;
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    bubble.textContent = m.content || m.text || ''; // Strict textContent! Eliminates script injection
+
+    wrapper.appendChild(sender);
+    wrapper.appendChild(time);
+    wrapper.appendChild(bubble);
+
+    item.appendChild(avatar);
+    item.appendChild(wrapper);
+
+    container.appendChild(item);
+}
+
+async function syncCurrentChat() {
+    if (!activeRoomId || current !== 'chat') return;
+
+    try {
+        const res = await fetch(`${ctx}/api/messages?roomId=${activeRoomId}&afterId=${lastPolledMessageId}`);
+        if (!res.ok) {
+            if (res.status === 401) {
+                // Session expired
+                toast('Session expired. Please log in again.');
+            }
+            return;
+        }
+
+        const msgs = await res.json();
+        if (Array.isArray(msgs) && msgs.length > 0) {
+            const container = $('#chat-messages');
+            state.messages[activeRoomId] ??= [];
+
+            for (const m of msgs) {
+                if (m.id > lastPolledMessageId) {
+                    lastPolledMessageId = m.id;
+                }
+
+                // Check for duplicates
+                const exists = state.messages[activeRoomId].some(local => local.id === m.id);
+                if (!exists) {
+                    state.messages[activeRoomId].push(m);
+                    if (container && current === 'chat') {
+                        appendMessageToDOM(container, m);
+                    }
+                }
+            }
+
+            if (container && current === 'chat') {
+                container.scrollTop = container.scrollHeight;
+            }
+        }
+    } catch (err) {
+        // Polling failure tolerated silently
+    }
+}
+
 async function sendMessage(e) {
     e.preventDefault();
-    if (ghostId) {
-        const g = allGhosts().find(x => x.id === ghostId);
-        if (g && g.expires <= Date.now()) {
-            toast('This room has expired.');
+    const form = e.target;
+    const input = form.querySelector('input[name="message"]');
+    const sendBtn = form.querySelector('button');
+    const text = input ? input.value.trim() : '';
+    if (!text || !activeRoomId) return;
+
+    // Check client-side expiry for GhostRooms
+    if (isGhostRoom) {
+        const g = state.ghostRooms.find(x => Number(x.id) === activeRoomId);
+        if (g && (g.expired || (g.expires && g.expires <= Date.now()))) {
+            toast('This GhostRoom has expired.');
+            showChatError('This room is closed to new messages.');
             render();
             return;
         }
     }
 
-    const form = e.target;
-    const input = form.querySelector('input[name="message"]');
-    const text = input ? input.value.trim() : '';
-    if (!text) return;
+    if (sendBtn) sendBtn.disabled = true;
 
-    input.value = '';
-
-    const key = ghostId || room;
-    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-    // Local optimistic update
-    (state.messages[key] ??= []).push({
-        author: name(),
-        text: text,
-        time: timeStr
-    });
-    save();
-    render();
-
-    // Sync with backend API
-    const targetRoomId = ghostId ? Number(ghostId) : (roomMap[room] || 1);
     try {
-        const formData = new URLSearchParams();
-        formData.append('roomId', targetRoomId);
-        formData.append('content', text);
-
-        const res = await fetch(`${ctx}/messages`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'Accept': 'application/json'
-            },
-            body: formData.toString()
+        const res = await apiPost(`${ctx}/messages`, {
+            roomId: activeRoomId,
+            content: text
         });
 
         if (res.ok) {
-            const data = await res.json();
-            if (data.messageId) {
-                lastPolledMessageId = Math.max(lastPolledMessageId, data.messageId);
-            }
+            // Clear message draft ONLY on confirmed success!
+            input.value = '';
+            // Immediately pull new message
+            await syncCurrentChat();
+        } else {
+            const data = await res.json().catch(() => ({}));
+            const errStr = data.error || 'Failed to send message. Your draft was preserved.';
+            toast(errStr);
+            showChatError(errStr);
         }
     } catch (err) {
-        console.warn('Backend chat sync error:', err);
-    }
-}
-
-async function syncRoomMessages() {
-    const targetRoomId = ghostId ? Number(ghostId) : (roomMap[room] || 1);
-    if (!targetRoomId || isNaN(targetRoomId)) return;
-
-    try {
-        const res = await fetch(`${ctx}/api/messages?roomId=${targetRoomId}&afterId=${lastPolledMessageId}`);
-        if (!res.ok) return;
-
-        const msgs = await res.json();
-        if (Array.isArray(msgs) && msgs.length > 0) {
-            const key = ghostId || room;
-            state.messages[key] ??= [];
-
-            for (const m of msgs) {
-                lastPolledMessageId = Math.max(lastPolledMessageId, m.id);
-                // Avoid duplicating our own freshly sent messages
-                const exists = state.messages[key].some(
-                    local => local.text === m.content && (local.author === m.senderNickname || local.id === m.id)
-                );
-                if (!exists) {
-                    state.messages[key].push({
-                        id: m.id,
-                        author: m.senderNickname,
-                        text: m.content,
-                        time: m.createdAt ? m.createdAt.substring(11, 16) : ''
-                    });
-                }
-            }
-            save();
-
-            const msgsEl = $('#chat-messages');
-            if (msgsEl && current === 'chat') {
-                msgsEl.innerHTML = state.messages[key].map(m => `
-                    <div class="message ${m.author === name() ? 'mine' : ''}">
-                        <span class="avatar ${m.author === name() ? 'lime' : 'purple'}">${esc(initials(m.author))}</span>
-                        <div>
-                            <b>${esc(m.author)}</b><time>${esc(m.time)}</time>
-                            <div class="bubble">${esc(m.text)}</div>
-                        </div>
-                    </div>
-                `).join('');
-                msgsEl.scrollTop = msgsEl.scrollHeight;
-            }
-        }
-    } catch (err) {
-        // Polling error ignored gracefully
+        toast('Network connection failed. Your message draft was preserved.');
+        showChatError('Network error. Your message draft was preserved.');
+    } finally {
+        if (sendBtn) sendBtn.disabled = false;
     }
 }
 
 // ----------------------------------------------------
 // VIEW: VibeMatch
 // ----------------------------------------------------
-function match() {
+function renderMatch() {
     const chosen = state.profile.interests || [];
-    const list = peers.map(p => {
-        const shared = p.interests.filter(i => chosen.includes(i));
-        const union = new Set([...p.interests, ...chosen]);
-        const score = union.size === 0 ? 0 : Math.round((shared.length / union.size) * 100);
-        return { ...p, score };
-    }).sort((a, b) => b.score - a.score);
+    const list = state.matches || [];
 
     return heading('Your people are out there.', 'Start with what you love. Find someone who gets it.') + `
-        <div class="info-banner">VibeMatch compares shared interests using Jaccard Similarity (intersection ÷ union). Choose your interests to see recommendations change in real time.</div>
+        <div class="info-banner">VibeMatch computes Jaccard Similarity index (intersection ÷ union) across students stored in the database. Updating your interests recalculates recommendations immediately on the server.</div>
 
         <div class="section-heading">
             <h2>What’s your thing?</h2>
-            <span class="muted">Select a few. We’ll find the overlap.</span>
+            <span class="muted">Select your technical interests. Recommendations update live.</span>
         </div>
 
         <div class="interest-picks">
-            ${interests.map(i => `
-                <button class="${chosen.includes(i) ? 'selected' : ''}" onclick="toggleInterest('${i}')">
-                    ${chosen.includes(i) ? '✓ ' : '+ '}${i}
+            ${state.allInterests.map(i => `
+                <button class="${chosen.includes(i) ? 'selected' : ''}" onclick="toggleInterest('${esc(i)}')">
+                    ${chosen.includes(i) ? '✓ ' : '+ '}${esc(i)}
                 </button>
             `).join('')}
         </div>
 
         <div class="card-grid">
-            ${list.map(p => `
+            ${list.length ? list.map(p => `
                 <article class="person">
                     <span class="match">${p.score}% match</span>
-                    <span class="avatar ${p.color}">${p.initials}</span>
+                    <span class="avatar ${p.score > 50 ? 'lime' : 'peach'}">${esc(p.initials || initials(p.name))}</span>
                     <h3>${esc(p.name)}</h3>
-                    <span class="muted">${esc(p.year)}</span>
-                    <p>${esc(p.bio)}</p>
+                    <span class="muted">${esc(p.year || 'CSE · 2nd year')}</span>
+                    <p>${esc(p.bio || 'Building things. Learning together on CampusVerse.')}</p>
                     <div>
-                        ${p.interests.map(i => `
+                        ${(p.interests || []).map(i => `
                             <span class="chip ${chosen.includes(i) ? 'green' : ''}">${esc(i)}</span>
                         `).join('')}
                     </div>
-                    <button class="primary" onclick="connect('${p.initials}')">
-                        ${state.connections.includes(p.initials) ? '✓ Saved to your circle' : 'Add to my circle ↗'}
+                    <button class="primary" onclick="toggleConnect('${esc(p.name)}')">
+                        ${state.savedCircle.includes(p.name) ? '✓ Saved to your circle' : 'Add to my circle ↗'}
                     </button>
                 </article>
-            `).join('')}
+            `).join('') : `
+                <div class="empty" style="grid-column: 1 / -1;">
+                    <p style="font-weight:600; margin-bottom: 8px;">No other student profiles found yet.</p>
+                    <small class="muted">Invite classmates to sign into CampusVerse Lite with their nickname to see live match percentages!</small>
+                </div>
+            `}
         </div>
     `;
 }
 
-function toggleInterest(i) {
-    const arr = state.profile.interests;
-    state.profile.interests = arr.includes(i) ? arr.filter(x => x !== i) : [...arr, i];
-    save();
+async function toggleInterest(interestName) {
+    const arr = state.profile.interests || [];
+    if (arr.includes(interestName)) {
+        state.profile.interests = arr.filter(x => x !== interestName);
+    } else {
+        state.profile.interests = [...arr, interestName];
+    }
     render();
 
-    // Persist to backend
-    syncProfileToBackend();
+    // Persist to backend and reload VibeMatch
+    try {
+        await apiPost(`${ctx}/student`, {
+            action: 'saveProfile',
+            nickname: state.profile.name,
+            interests: state.profile.interests
+        });
+
+        // Refetch matches with updated interests
+        await loadMatches();
+        if (current === 'match') {
+            render();
+        }
+    } catch (e) {
+        toast('Could not save interest to server.');
+    }
 }
 
-function connect(id) {
-    if (state.connections.includes(id)) {
-        state.connections = state.connections.filter(x => x !== id);
-        toast('Removed from your saved circle');
+function toggleConnect(peerName) {
+    if (state.savedCircle.includes(peerName)) {
+        state.savedCircle = state.savedCircle.filter(x => x !== peerName);
+        toast('Removed from your circle');
     } else {
-        state.connections.push(id);
+        state.savedCircle.push(peerName);
         toast('Saved to your circle');
     }
-    save();
+    saveUiPref();
     render();
 }
 
@@ -713,30 +671,40 @@ function countdown(t) {
     return `${hrs} : ${mins} : ${secs}`;
 }
 
-function ghosts() {
+function renderGhosts() {
+    const list = state.ghostRooms || [];
+
     return heading(
         'Good conversations. Limited editions.',
         'A room for right now. Revision, ideas, or whatever’s on your mind.',
         `<button class="primary" onclick="createGhost()">+ Create a room</button>`
     ) + `
-        <div class="info-banner">GhostRooms automatically lock when their timer runs out. Messages remain readable, but no new messages can be posted.</div>
+        <div class="info-banner">GhostRooms automatically lock and reject new messages after their timer expires. Stored securely in H2 database.</div>
         <div class="card-grid">
-            ${allGhosts().map(g => `
-                <article class="ghost-card">
-                    <div class="ghost" aria-hidden="true"></div>
-                    <h3>${esc(g.title)}</h3>
-                    <p>${esc(g.topic)}</p>
-                    <span class="chip">${esc(g.subject)}</span>
-                    <div class="countdown" data-expiry="${g.expires}">${countdown(g.expires)}</div>
-                    <div class="muted">${g.expires > Date.now() ? 'until this room vanishes' : 'This conversation has ended'}</div>
-                    <div style="margin-top:22px">
-                        <span class="muted">♧ ${g.members} members</span>
-                        <button class="room-action" onclick="openRoom('${g.subject}','${g.id}')">
-                            ${g.expires > Date.now() ? 'Step inside ↗' : 'Read chat ↗'}
-                        </button>
-                    </div>
-                </article>
-            `).join('')}
+            ${list.length ? list.map(g => {
+                const isExp = g.expired || (g.expires && g.expires <= Date.now());
+                return `
+                    <article class="ghost-card">
+                        <div class="ghost" aria-hidden="true"></div>
+                        <h3>${esc(g.title)}</h3>
+                        <p>${esc(g.topic || 'Live temporary study session')}</p>
+                        <span class="chip">${esc(g.subject || 'General')}</span>
+                        <div class="countdown" data-expiry="${g.expires}">${countdown(g.expires)}</div>
+                        <div class="muted">${!isExp ? 'until this room vanishes' : 'This conversation has ended'}</div>
+                        <div style="margin-top:22px">
+                            <span class="muted">♧ ${g.members || 1} members</span>
+                            <button class="room-action" onclick="openRoomById(${g.id}, '${esc(g.title)}', true)">
+                                ${!isExp ? 'Step inside ↗' : 'Read chat ↗'}
+                            </button>
+                        </div>
+                    </article>
+                `;
+            }).join('') : `
+                <div class="empty" style="grid-column: 1 / -1;">
+                    <p style="font-weight:600; margin-bottom: 8px;">No GhostRooms active right now.</p>
+                    <small class="muted">Spawn a temporary room for quick doubt clearing or late-night cramming!</small>
+                </div>
+            `}
         </div>
     `;
 }
@@ -766,7 +734,7 @@ function createGhost() {
             <label>
                 Subject
                 <select name="subject">
-                    ${subjects.map(s => `<option>${s}</option>`).join('')}
+                    ${subjects.map(s => `<option value="${s}">${s}</option>`).join('')}
                 </select>
             </label>
             <label>
@@ -788,60 +756,37 @@ async function submitGhost(e) {
     const f = new FormData(e.target);
     const title = f.get('title').trim();
     const topic = f.get('topic').trim();
-    const subj = f.get('subject');
     const hours = Number(f.get('hours')) || 2;
     if (!title || !topic) return;
 
-    const expiresTime = Date.now() + hours * 3600000;
-    const newGhost = {
-        id: 'g' + Date.now(),
-        title,
-        topic,
-        subject: subj,
-        expires: expiresTime,
-        members: 1
-    };
-
-    state.ghosts.unshift(newGhost);
-    save();
-    $('#dialog').close();
-    render();
-    toast('Your GhostRoom is ready.');
-
-    // Sync to backend H2 database
     try {
-        const params = new URLSearchParams();
-        params.append('name', title);
-        params.append('duration', `${hours} hours`);
-
-        const res = await fetch(`${ctx}/ghostrooms`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'Accept': 'application/json'
-            },
-            body: params.toString()
+        const res = await apiPost(`${ctx}/ghostrooms`, {
+            name: title,
+            duration: `${hours} hours`
         });
 
         if (res.ok) {
             const data = await res.json();
-            if (data.roomId) {
-                newGhost.id = String(data.roomId);
-                save();
-            }
+            $('#dialog').close();
+            toast('Your GhostRoom is ready.');
+            await loadGhostRooms();
+            openRoomById(data.roomId, title, true);
+        } else {
+            const err = await res.json().catch(() => ({}));
+            toast(err.error || 'Failed to create GhostRoom.');
         }
     } catch (err) {
-        console.warn('GhostRoom backend sync error:', err);
+        toast('Network error creating GhostRoom.');
     }
 }
 
 // ----------------------------------------------------
 // VIEW: DoubtDrop
 // ----------------------------------------------------
-function doubts() {
-    const items = allDoubts().filter(d =>
-        (filter === 'All' || (filter === 'Resolved' && d.resolved) || (filter === 'Open' && !d.resolved)) &&
-        `${d.title} ${d.body} ${d.subject}`.toLowerCase().includes(search.toLowerCase())
+function renderDoubts() {
+    const items = (state.doubts || []).filter(d =>
+        (doubtFilter === 'All' || (doubtFilter === 'Resolved' && d.resolved) || (doubtFilter === 'Open' && !d.resolved)) &&
+        `${d.title} ${d.body} ${d.subject}`.toLowerCase().includes(doubtSearch.toLowerCase())
     );
 
     return heading(
@@ -851,17 +796,17 @@ function doubts() {
     ) + `
         <div class="doubt-controls">
             <input aria-label="Search doubts" placeholder="Search questions, subjects, or concepts…"
-                   value="${esc(search)}" oninput="search=this.value;refreshDoubts()">
-            <select aria-label="Filter questions" onchange="filter=this.value;render()">
-                ${['All', 'Open', 'Resolved'].map(x => `<option ${x === filter ? 'selected' : ''}>${x}</option>`).join('')}
+                   value="${esc(doubtSearch)}" oninput="doubtSearch=this.value;refreshDoubtsList()">
+            <select aria-label="Filter questions" onchange="doubtFilter=this.value;render()">
+                ${['All', 'Open', 'Resolved'].map(x => `<option ${x === doubtFilter ? 'selected' : ''}>${x}</option>`).join('')}
             </select>
         </div>
-        <div id="doubt-list">${doubtList(items)}</div>
+        <div id="doubt-list">${doubtListHTML(items)}</div>
     `;
 }
 
-function doubtList(items) {
-    if (!items.length) {
+function doubtListHTML(items) {
+    if (!items || !items.length) {
         return '<div class="empty">No questions here yet. Be the first to ask.</div>';
     }
     return items.map(d => `
@@ -872,20 +817,20 @@ function doubtList(items) {
             <p>${esc(d.body)}</p>
             <div class="bottom">
                 <span class="muted">${esc(d.author)} · ${(d.replies || []).length} ${(d.replies || []).length === 1 ? 'reply' : 'replies'}</span>
-                <button class="room-action" onclick="viewDoubt('${d.id}')">Join the conversation ↗</button>
+                <button class="room-action" onclick="viewDoubt(${d.id})">Join the conversation ↗</button>
             </div>
         </article>
     `).join('');
 }
 
-function refreshDoubts() {
+function refreshDoubtsList() {
     const listEl = $('#doubt-list');
     if (!listEl) return;
-    const items = allDoubts().filter(d =>
-        (filter === 'All' || (filter === 'Resolved' && d.resolved) || (filter === 'Open' && !d.resolved)) &&
-        `${d.title} ${d.body} ${d.subject}`.toLowerCase().includes(search.toLowerCase())
+    const items = (state.doubts || []).filter(d =>
+        (doubtFilter === 'All' || (doubtFilter === 'Resolved' && d.resolved) || (doubtFilter === 'Open' && !d.resolved)) &&
+        `${d.title} ${d.body} ${d.subject}`.toLowerCase().includes(doubtSearch.toLowerCase())
     );
-    listEl.innerHTML = doubtList(items);
+    listEl.innerHTML = doubtListHTML(items);
 }
 
 function askDoubt() {
@@ -895,7 +840,7 @@ function askDoubt() {
         <form class="form-stack" onsubmit="submitDoubt(event)">
             <label>
                 Subject
-                <select name="subject">${subjects.map(s => `<option>${s}</option>`).join('')}</select>
+                <select name="subject">${subjects.map(s => `<option value="${s}">${s}</option>`).join('')}</select>
             </label>
             <label>
                 Your question
@@ -903,7 +848,7 @@ function askDoubt() {
             </label>
             <label>
                 A little more context
-                <textarea name="body" maxlength="2000" placeholder="What have you tried? Where are you stuck?" required></textarea>
+                <textarea name="description" maxlength="2000" placeholder="What have you tried? Where are you stuck?" required></textarea>
             </label>
             <button class="primary" type="submit">Drop my doubt ↗</button>
         </form>
@@ -915,72 +860,67 @@ async function submitDoubt(e) {
     const f = new FormData(e.target);
     const subj = f.get('subject');
     const title = f.get('title').trim();
-    const body = f.get('body').trim();
-    if (!title || !body) return;
+    const desc = f.get('description').trim();
+    if (!title || !desc) return;
 
-    const newDoubt = {
-        id: 'd' + Date.now(),
-        subject: subj,
-        title: title,
-        body: body,
-        author: name(),
-        owned: true,
-        resolved: false,
-        replies: []
-    };
-
-    state.doubts.unshift(newDoubt);
-    save();
-    $('#dialog').close();
-    navigate('doubts');
-    toast('Your question is out there.');
-
-    // Sync to backend H2 database
     try {
-        const params = new URLSearchParams();
-        params.append('subject', subj);
-        params.append('title', title);
-        params.append('description', body);
-
-        const res = await fetch(`${ctx}/doubts`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'Accept': 'application/json'
-            },
-            body: params.toString()
+        const res = await apiPost(`${ctx}/doubts`, {
+            subject: subj,
+            title: title,
+            description: desc
         });
 
         if (res.ok) {
             const data = await res.json();
+            $('#dialog').close();
+            toast('Your question is out there.');
+            await loadDoubts();
+            navigate('doubts');
             if (data.id) {
-                newDoubt.id = data.id;
-                save();
+                viewDoubt(data.id);
             }
+        } else {
+            const err = await res.json().catch(() => ({}));
+            toast(err.error || 'Failed to post doubt.');
         }
     } catch (err) {
-        console.warn('Backend doubt sync error:', err);
+        toast('Network error posting doubt.');
     }
 }
 
-function viewDoubt(id) {
-    const d = allDoubts().find(x => String(x.id) === String(id));
+async function viewDoubt(id) {
+    // Fetch fresh doubt details including all answers from backend
+    let d = state.doubts.find(x => Number(x.id) === Number(id));
+    try {
+        const res = await fetch(`${ctx}/doubts?id=${id}&json=true`);
+        if (res.ok) {
+            const fresh = await res.json();
+            d = fresh;
+            // Update in local cache
+            const idx = state.doubts.findIndex(x => Number(x.id) === Number(id));
+            if (idx >= 0) state.doubts[idx] = fresh;
+            else state.doubts.unshift(fresh);
+        }
+    } catch (e) {}
+
     if (!d) return;
 
     modal(`
         <span class="chip">${esc(d.subject)}</span>
         <h2 style="margin-top:15px">${esc(d.title)}</h2>
-        <p>${esc(d.body)}</p>
+        <p style="white-space: pre-wrap;">${esc(d.body)}</p>
         <span class="muted">Asked by ${esc(d.author)} · ${d.resolved ? 'Resolved' : 'Open'}</span>
 
         <div class="answers">
             ${(d.replies || []).length ? d.replies.map(r => `
-                <b style="font-size:11px">${esc(r.author)}</b>
-                <p>${esc(r.text)}</p>
+                <div style="margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid #ece8f2;">
+                    <b style="font-size:11px">${esc(r.author)}</b>
+                    <p style="margin:4px 0 0; white-space:pre-wrap;">${esc(r.text)}</p>
+                </div>
             `).join('') : '<p>No replies yet. A little help starts with you.</p>'}
         </div>
 
-        <form class="form-stack" onsubmit="replyDoubt(event,'${d.id}')">
+        <form class="form-stack" onsubmit="replyDoubt(event, ${d.id})">
             <label>
                 Your reply
                 <textarea name="reply" required maxlength="2000" placeholder="Share an explanation or a helpful example…"></textarea>
@@ -988,10 +928,12 @@ function viewDoubt(id) {
             <button class="primary" type="submit">Post reply ↗</button>
         </form>
 
-        ${d.owned || d.author === name() ? `
-            <button class="room-action" style="margin-top:15px" onclick="resolveDoubt('${d.id}')">
-                ${d.resolved ? 'Reopen question' : '✓ Mark as resolved'}
-            </button>
+        ${d.owned ? `
+            <div style="margin-top: 18px; border-top: 1px solid var(--line); padding-top: 12px;">
+                <button class="room-action" onclick="resolveDoubt(${d.id})">
+                    ${d.resolved ? '✓ Question Resolved' : '✅ Mark as RESOLVED (Author only)'}
+                </button>
+            </div>
         ` : ''}
     `);
 }
@@ -1001,77 +943,49 @@ async function replyDoubt(e, id) {
     const val = new FormData(e.target).get('reply').trim();
     if (!val) return;
 
-    const d = allDoubts().find(x => String(x.id) === String(id));
-    if (!d) return;
+    try {
+        const res = await apiPost(`${ctx}/doubts/answer`, {
+            doubtId: id,
+            answerText: val
+        });
 
-    d.replies ??= [];
-    d.replies.push({
-        author: name(),
-        text: val
-    });
-
-    updateDoubt(d);
-    $('#dialog').close();
-    render();
-    viewDoubt(id);
-    toast('A little help, delivered.');
-
-    // Sync answer to backend if ID is numeric
-    if (!String(id).startsWith('seed') && !String(id).startsWith('d')) {
-        try {
-            const params = new URLSearchParams();
-            params.append('doubtId', id);
-            params.append('answerText', val);
-
-            await fetch(`${ctx}/doubts/answer`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'Accept': 'application/json'
-                },
-                body: params.toString()
-            });
-        } catch (err) {
-            console.warn('Backend reply sync error:', err);
+        if (res.ok) {
+            toast('A little help, delivered.');
+            await loadDoubts();
+            viewDoubt(id);
+        } else {
+            const err = await res.json().catch(() => ({}));
+            toast(err.error || 'Failed to submit answer.');
         }
+    } catch (err) {
+        toast('Network error submitting reply.');
     }
 }
 
 async function resolveDoubt(id) {
-    const d = allDoubts().find(x => String(x.id) === String(id));
-    if (!d) return;
+    try {
+        const res = await apiPost(`${ctx}/doubts`, {
+            action: 'resolve',
+            doubtId: id
+        });
 
-    d.resolved = !d.resolved;
-    updateDoubt(d);
-    $('#dialog').close();
-    render();
-    toast(d.resolved ? 'A lightbulb moment! Marked resolved.' : 'Question reopened.');
-
-    // Sync resolve status to backend
-    if (!String(id).startsWith('seed') && !String(id).startsWith('d')) {
-        try {
-            const params = new URLSearchParams();
-            params.append('action', 'resolve');
-            params.append('doubtId', id);
-
-            await fetch(`${ctx}/doubts`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'Accept': 'application/json'
-                },
-                body: params.toString()
-            });
-        } catch (err) {
-            console.warn('Backend resolve sync error:', err);
+        if (res.ok) {
+            toast('A lightbulb moment! Marked as resolved.');
+            await loadDoubts();
+            viewDoubt(id);
+        } else {
+            const err = await res.json().catch(() => ({}));
+            toast(err.error || 'Only the author can resolve this doubt.');
         }
+    } catch (err) {
+        toast('Network error resolving doubt.');
     }
 }
 
 // ----------------------------------------------------
 // VIEW: Profile
 // ----------------------------------------------------
-function profile() {
+function renderProfile() {
     return heading('A little more you.', 'Your name and interests help your campus find you.') + `
         <section class="panel profile-panel">
             <h2>Your campus identity</h2>
@@ -1079,19 +993,22 @@ function profile() {
             <form class="form-stack" onsubmit="saveProfile(event)">
                 <label>
                     Your nickname
-                    <input name="nickname" maxlength="50" value="${esc(name())}" required autofocus>
+                    <input name="nickname" maxlength="50" value="${esc(state.profile.name)}" required autofocus>
                 </label>
                 <div>
                     <label>Your interests</label>
                     <div class="interest-picks">
-                        ${interests.map(i => `
-                            <button type="button" class="${state.profile.interests.includes(i) ? 'selected' : ''}" onclick="toggleInterest('${i}')">
-                                ${state.profile.interests.includes(i) ? '✓ ' : '+ '}${i}
+                        ${state.allInterests.map(i => `
+                            <button type="button" class="${state.profile.interests.includes(i) ? 'selected' : ''}" onclick="toggleInterest('${esc(i)}')">
+                                ${state.profile.interests.includes(i) ? '✓ ' : '+ '}${esc(i)}
                             </button>
                         `).join('')}
                     </div>
                 </div>
-                <button class="primary" type="submit">Save my profile ↗</button>
+                <div style="display:flex; gap:12px; align-items:center;">
+                    <button class="primary" type="submit">Save my profile ↗</button>
+                    <button type="button" class="room-action" style="color:#b91c1c; border-color:#fca5a5;" onclick="logoutSession()">Log Out</button>
+                </div>
             </form>
         </section>
     `;
@@ -1103,55 +1020,71 @@ async function saveProfile(e) {
     if (!n) return;
 
     state.profile.name = n;
-    save();
-    render();
-    toast('Looking like you. Profile saved.');
 
-    syncProfileToBackend();
+    try {
+        const res = await apiPost(`${ctx}/student`, {
+            action: 'saveProfile',
+            nickname: n,
+            interests: state.profile.interests
+        });
+
+        if (res.ok) {
+            toast('Looking like you. Profile saved.');
+            render();
+            await loadMatches();
+        } else {
+            const err = await res.json().catch(() => ({}));
+            toast(err.error || 'Could not save profile.');
+        }
+    } catch (err) {
+        toast('Network error saving profile.');
+    }
 }
 
-async function syncProfileToBackend() {
-    try {
-        const params = new URLSearchParams();
-        params.append('action', 'saveProfile');
-        params.append('nickname', state.profile.name);
-        for (const interest of (state.profile.interests || [])) {
-            params.append('interests', interest);
-        }
+function logoutSession() {
+    // Submit standard form to trigger session invalidation and redirect
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = `${ctx}/student`;
 
-        await fetch(`${ctx}/student`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'Accept': 'application/json'
-            },
-            body: params.toString()
-        });
-    } catch (err) {
-        console.warn('Profile sync error:', err);
-    }
+    const aInput = document.createElement('input');
+    aInput.type = 'hidden';
+    aInput.name = 'action';
+    aInput.value = 'logout';
+
+    const cInput = document.createElement('input');
+    cInput.type = 'hidden';
+    cInput.name = 'csrfToken';
+    cInput.value = getCsrfToken();
+
+    form.appendChild(aInput);
+    form.appendChild(cInput);
+    document.body.appendChild(form);
+    form.submit();
 }
 
 // ----------------------------------------------------
 // VIEW: Saved Activity
 // ----------------------------------------------------
-function saved() {
-    return heading('Your little corner of campus.', 'The people, questions, and conversations you’ve started.') + `
+function renderSaved() {
+    const savedDoubts = (state.doubts || []).filter(d => d.owned);
+
+    return heading('Your little corner of campus.', 'The questions and conversations you’ve started.') + `
         <div class="panel">
             <h2>Your circle</h2>
-            ${state.connections.length ? peers.filter(p => state.connections.includes(p.initials)).map(p => `
+            ${state.savedCircle.length ? `
                 <div class="room-row">
-                    <span class="avatar ${p.color}">${p.initials}</span>
+                    <span class="avatar lime">CU</span>
                     <div class="room-info">
-                        <b>${esc(p.name)}</b>
-                        <p>${p.interests.join(' · ')}</p>
+                        <b>${state.savedCircle.join(', ')}</b>
+                        <p>Saved study partners</p>
                     </div>
                     <button class="room-action" onclick="navigate('match')">View matches ↗</button>
                 </div>
-            `).join('') : '<p class="muted">Your circle is waiting. Find someone with a shared interest in VibeMatch.</p>'}
+            ` : '<p class="muted">Your circle is waiting. Find someone with a shared interest in VibeMatch.</p>'}
 
             <h2 style="margin-top:28px">Your questions</h2>
-            ${doubtList(state.doubts)}
+            ${doubtListHTML(savedDoubts)}
 
             <button class="primary" style="margin-top:20px" onclick="navigate('match')">Explore VibeMatch ↗</button>
         </div>
@@ -1159,28 +1092,89 @@ function saved() {
 }
 
 // ----------------------------------------------------
+// DATA LOADERS (Connected to Backend Servlets)
+// ----------------------------------------------------
+
+async function loadRooms() {
+    try {
+        const res = await fetch(`${ctx}/chat?rooms=true`);
+        if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data)) {
+                state.studyRooms = data;
+            }
+        }
+    } catch (ignored) {}
+}
+
+async function loadGhostRooms() {
+    try {
+        const res = await fetch(`${ctx}/ghostrooms?json=true`);
+        if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data)) {
+                state.ghostRooms = data;
+            }
+        }
+    } catch (ignored) {}
+}
+
+async function loadDoubts() {
+    try {
+        const res = await fetch(`${ctx}/doubts?json=true`);
+        if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data)) {
+                state.doubts = data;
+            }
+        }
+    } catch (ignored) {}
+}
+
+async function loadMatches() {
+    try {
+        const res = await fetch(`${ctx}/vibematch?json=true`);
+        if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data)) {
+                state.matches = data;
+            }
+        }
+    } catch (ignored) {}
+}
+
+async function loadProfile() {
+    try {
+        const res = await fetch(`${ctx}/student?json=true`);
+        if (res.ok) {
+            const data = await res.json();
+            if (data.loggedIn) {
+                state.profile.name = data.nickname.replace(/_/g, ' ');
+                state.profile.interests = data.interests || [];
+                if (Array.isArray(data.allInterests) && data.allInterests.length > 0) {
+                    state.allInterests = data.allInterests.map(i => i.name);
+                }
+            }
+        }
+    } catch (ignored) {}
+}
+
+// ----------------------------------------------------
 // INITIALIZATION & TIMERS
 // ----------------------------------------------------
 
-// Live countdown ticker & active chat polling
+// Live countdown ticker for GhostRooms (every 1 second)
 setInterval(() => {
-    // 1. Update GhostRoom countdown timers
     document.querySelectorAll('[data-expiry]').forEach(el => {
         el.textContent = countdown(Number(el.dataset.expiry));
     });
-
-    // 2. Poll messages if currently on chat screen
-    if (current === 'chat') {
-        syncRoomMessages();
-    }
-}, 2000);
+}, 1000);
 
 // Hash routing
 window.addEventListener('hashchange', () => {
     const p = location.hash.slice(1);
     if (p && p !== current) {
-        current = p;
-        render();
+        navigate(p);
     }
 });
 
@@ -1192,54 +1186,23 @@ if (dialog) {
     });
 }
 
-// Initial Boot
+// Initial Boot Sequence
 async function boot() {
-    // Fetch live study rooms from backend
-    try {
-        const res = await fetch(`${ctx}/chat?rooms=true`);
-        if (res.ok) {
-            const roomsData = await res.json();
-            if (Array.isArray(roomsData)) {
-                for (const r of roomsData) {
-                    if (r.name && r.id) {
-                        roomMap[r.name] = r.id;
-                    }
-                }
-            }
-        }
-    } catch (ignored) {}
+    await Promise.all([
+        loadProfile(),
+        loadRooms(),
+        loadGhostRooms(),
+        loadDoubts(),
+        loadMatches()
+    ]);
 
-    // Fetch existing doubts from backend
-    try {
-        const res = await fetch(`${ctx}/doubts?json=true`);
-        if (res.ok) {
-            const doubtsData = await res.json();
-            if (Array.isArray(doubtsData) && doubtsData.length > 0) {
-                // Merge with state.doubts
-                for (const d of doubtsData) {
-                    const exists = state.doubts.some(x => x.id === d.id);
-                    if (!exists) {
-                        state.doubts.push({
-                            id: d.id,
-                            subject: d.subject,
-                            title: d.title,
-                            body: d.body,
-                            author: d.author,
-                            owned: d.owned,
-                            resolved: d.resolved,
-                            replies: (d.replies || []).map(r => ({ author: r.author, text: r.text }))
-                        });
-                    }
-                }
-                save();
-            }
-        }
-    } catch (ignored) {}
+    // Check saved tab or URL hash
+    const initialRoute = location.hash.slice(1) || localStorage.getItem('campusverse-pref-tab') || 'home';
+    current = ['home', 'chat', 'match', 'ghost', 'doubts', 'profile', 'saved'].includes(initialRoute)
+        ? initialRoute
+        : 'home';
 
-    // Set initial route and render
-    current = location.hash.slice(1) || 'home';
     render();
 }
 
 boot();
-
