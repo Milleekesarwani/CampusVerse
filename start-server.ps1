@@ -5,6 +5,22 @@
 
 $ErrorActionPreference = "Stop"
 
+# Auto-detect JAVA_HOME if not set
+if (-not $env:JAVA_HOME) {
+    $candidateJavas = @(
+        "C:\Program Files\Java\jdk-26",
+        "C:\Program Files\Java\jdk-21"
+    ) + (Get-ChildItem -Path "C:\Program Files\Java" -Directory -Filter "jdk*" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+
+    foreach ($cand in $candidateJavas) {
+        if (Test-Path (Join-Path $cand "bin\java.exe")) {
+            $env:JAVA_HOME = $cand
+            Write-Host "[INFO] Auto-detected JAVA_HOME: $cand" -ForegroundColor DarkCyan
+            break
+        }
+    }
+}
+
 if (-not $env:JAVA_HOME) {
     Write-Error "[ERROR] The JAVA_HOME environment variable is not defined.`nPlease set JAVA_HOME to your JDK 21+ directory (e.g. `$env:JAVA_HOME = 'C:\Program Files\Java\jdk-21')."
     exit 1
@@ -14,6 +30,23 @@ $javaBin = Join-Path $env:JAVA_HOME "bin\java.exe"
 if (-not (Test-Path $javaBin)) {
     Write-Error "[ERROR] java.exe was not found at: $javaBin`nPlease verify that JAVA_HOME points to a valid JDK installation."
     exit 1
+}
+
+# Auto-detect CATALINA_HOME if not set
+if (-not $env:CATALINA_HOME) {
+    $candidateTomcats = @(
+        "$env:USERPROFILE\.tomcat\apache-tomcat-10.1.61",
+        "C:\apache-tomcat-10.1.61"
+    ) + (Get-ChildItem -Path "$env:USERPROFILE\.tomcat" -Directory -Filter "apache-tomcat-10*" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName) `
+      + (Get-ChildItem -Path "C:\" -Directory -Filter "apache-tomcat-10*" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+
+    foreach ($cand in $candidateTomcats) {
+        if (Test-Path (Join-Path $cand "bin\catalina.bat")) {
+            $env:CATALINA_HOME = $cand
+            Write-Host "[INFO] Auto-detected CATALINA_HOME: $cand" -ForegroundColor DarkCyan
+            break
+        }
+    }
 }
 
 if (-not $env:CATALINA_HOME) {

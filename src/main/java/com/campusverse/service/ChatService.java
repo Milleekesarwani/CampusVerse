@@ -2,8 +2,10 @@ package com.campusverse.service;
 
 import com.campusverse.dao.MessageDAO;
 import com.campusverse.dao.RoomDAO;
+import com.campusverse.dao.StudentDAO;
 import com.campusverse.model.Message;
 import com.campusverse.model.Room;
+import com.campusverse.model.Student;
 import com.campusverse.util.SecurityUtils;
 
 import java.sql.SQLException;
@@ -14,19 +16,25 @@ public class ChatService {
 
     private final MessageDAO messageDAO;
     private final RoomDAO roomDAO;
+    private final StudentDAO studentDAO;
     private final Clock clock;
 
     public ChatService() {
-        this(new MessageDAO(), new RoomDAO(), Clock.systemUTC());
+        this(new MessageDAO(), new RoomDAO(), new StudentDAO(), Clock.systemUTC());
     }
 
     public ChatService(MessageDAO messageDAO, RoomDAO roomDAO) {
-        this(messageDAO, roomDAO, Clock.systemUTC());
+        this(messageDAO, roomDAO, new StudentDAO(), Clock.systemUTC());
     }
 
     public ChatService(MessageDAO messageDAO, RoomDAO roomDAO, Clock clock) {
+        this(messageDAO, roomDAO, new StudentDAO(), clock);
+    }
+
+    public ChatService(MessageDAO messageDAO, RoomDAO roomDAO, StudentDAO studentDAO, Clock clock) {
         this.messageDAO = messageDAO;
         this.roomDAO = roomDAO;
+        this.studentDAO = studentDAO != null ? studentDAO : new StudentDAO();
         this.clock = clock != null ? clock : Clock.systemUTC();
     }
 
@@ -61,6 +69,12 @@ public class ChatService {
             throw new IllegalStateException("Room has expired and is now closed to new messages");
         }
 
+        // Student validation
+        Student student = studentDAO.findById(studentId);
+        if (student == null) {
+            throw new IllegalArgumentException("Student not found");
+        }
+
         // Escape HTML to prevent stored XSS attacks
         String safeContent = SecurityUtils.escapeHtml(trimmed);
 
@@ -68,8 +82,13 @@ public class ChatService {
         message.setRoomId(roomId);
         message.setStudentId(studentId);
         message.setContent(safeContent);
+        message.setSenderNickname(student.getNickname());
 
-        return messageDAO.saveMessage(message);
+        Message saved = messageDAO.saveMessage(message);
+        if (saved != null) {
+            saved.setSenderNickname(student.getNickname());
+        }
+        return saved;
     }
 
     public List<Message> getRecentMessages(Long roomId, int limit) throws SQLException {
