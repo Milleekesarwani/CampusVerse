@@ -134,6 +134,9 @@ public class DatabaseManager {
             // Seed predefined interests
             seedDefaultInterests(conn);
 
+            // Seed initial campus peers, doubts, and ghost rooms
+            seedDefaultPeersAndDoubts(conn);
+
             LOGGER.info("Database schema initialized and default data verified.");
 
         } catch (SQLException e) {
@@ -181,6 +184,144 @@ public class DatabaseManager {
                     }
                 }
             }
+        }
+    }
+
+    private static void seedDefaultPeersAndDoubts(Connection conn) throws SQLException {
+        // 1. Seed students
+        String[][] peers = {
+            {"Milee_Kesarwani", "Java", "DSA", "Hackathons"},
+            {"Aman_Sharma", "Java", "React", "Hackathons"},
+            {"Riya_Verma", "Java", "DSA", "Hackathons"},
+            {"Kabir_Singh", "UI/UX", "React", "Gaming"},
+            {"Ananya_Das", "DBMS", "Python", "DSA"}
+        };
+
+        String checkStu = "SELECT id FROM students WHERE nickname = ?";
+        String insStu = "INSERT INTO students (nickname) VALUES (?)";
+        String insInter = "MERGE INTO student_interests (student_id, interest_id) KEY(student_id, interest_id) " +
+                          "SELECT ?, id FROM interests WHERE name = ?";
+
+        for (String[] peer : peers) {
+            String nick = peer[0];
+            Long stuId = null;
+            try (PreparedStatement cs = conn.prepareStatement(checkStu)) {
+                cs.setString(1, nick);
+                try (ResultSet rs = cs.executeQuery()) {
+                    if (rs.next()) {
+                        stuId = rs.getLong(1);
+                    }
+                }
+            }
+            if (stuId == null) {
+                try (PreparedStatement is = conn.prepareStatement(insStu, Statement.RETURN_GENERATED_KEYS)) {
+                    is.setString(1, nick);
+                    is.executeUpdate();
+                    try (ResultSet rs = is.getGeneratedKeys()) {
+                        if (rs.next()) stuId = rs.getLong(1);
+                    }
+                }
+            }
+            if (stuId != null) {
+                for (int i = 1; i < peer.length; i++) {
+                    try (PreparedStatement mi = conn.prepareStatement(insInter)) {
+                        mi.setLong(1, stuId);
+                        mi.setString(2, peer[i]);
+                        mi.executeUpdate();
+                    }
+                }
+            }
+        }
+
+        // 2. Seed initial doubts if table is empty
+        String checkDoubts = "SELECT COUNT(*) FROM doubts";
+        try (Statement s = conn.createStatement(); ResultSet rs = s.executeQuery(checkDoubts)) {
+            if (rs.next() && rs.getInt(1) == 0) {
+                Long riyaId = getStudentIdByNick(conn, "Riya_Verma");
+                Long amanId = getStudentIdByNick(conn, "Aman_Sharma");
+                Long ananyaId = getStudentIdByNick(conn, "Ananya_Das");
+                Long kabirId = getStudentIdByNick(conn, "Kabir_Singh");
+
+                if (riyaId != null && amanId != null) {
+                    Long d1 = insertDoubt(conn, riyaId, "Java",
+                            "Can someone explain method overloading with a real-life example?",
+                            "I understand the syntax, but when should I use it instead of creating a new method name?", "OPEN");
+                    if (d1 != null) {
+                        insertAnswer(conn, d1, amanId,
+                                "Use overloading when the operation is the same but the input differs — like add(int, int) and add(double, double). Java picks the method from the argument types.");
+                    }
+                }
+
+                if (ananyaId != null) {
+                    insertDoubt(conn, ananyaId, "DBMS",
+                            "A simple way to remember 2NF vs 3NF?",
+                            "Partial and transitive dependencies keep getting mixed up in my head. Any good examples?", "OPEN");
+                }
+
+                if (kabirId != null && riyaId != null) {
+                    Long d3 = insertDoubt(conn, kabirId, "DSA",
+                            "Why is binary search O(log n)?",
+                            "What happens to the search space in each step? Looking for an intuitive explanation.", "RESOLVED");
+                    if (d3 != null) {
+                        insertAnswer(conn, d3, riyaId,
+                                "Each comparison halves the search space. After k steps, n / 2^k = 1, so k = log₂(n).");
+                    }
+                }
+            }
+        }
+
+        // 3. Seed initial ghost rooms if none exist
+        String checkGhosts = "SELECT COUNT(*) FROM rooms WHERE type = 'GHOST'";
+        try (Statement s = conn.createStatement(); ResultSet rs = s.executeQuery(checkGhosts)) {
+            if (rs.next() && rs.getInt(1) == 0) {
+                long now = System.currentTimeMillis();
+                insertGhostRoom(conn, "DBMS: the last-minute club", new java.sql.Timestamp(now + 2 * 3600 * 1000));
+                insertGhostRoom(conn, "Two pointers, one brain cell", new java.sql.Timestamp(now + 4 * 3600 * 1000));
+                insertGhostRoom(conn, "Hackathon idea jam", new java.sql.Timestamp(now + 8 * 3600 * 1000));
+            }
+        }
+    }
+
+    private static Long getStudentIdByNick(Connection conn, String nick) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement("SELECT id FROM students WHERE nickname = ?")) {
+            ps.setString(1, nick);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getLong(1) : null;
+            }
+        }
+    }
+
+    private static Long insertDoubt(Connection conn, Long stuId, String subject, String title, String desc, String status) throws SQLException {
+        String sql = "INSERT INTO doubts (student_id, subject, title, description, status) VALUES (?, ?, ?, ?, ?)";
+        try (PreparedStatement ps = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
+            ps.setLong(1, stuId);
+            ps.setString(2, subject);
+            ps.setString(3, title);
+            ps.setString(4, desc);
+            ps.setString(5, status);
+            ps.executeUpdate();
+            try (ResultSet rs = ps.getGeneratedKeys()) {
+                return rs.next() ? rs.getLong(1) : null;
+            }
+        }
+    }
+
+    private static void insertAnswer(Connection conn, Long doubtId, Long stuId, String text) throws SQLException {
+        String sql = "INSERT INTO doubt_answers (doubt_id, student_id, answer_text) VALUES (?, ?, ?)";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, doubtId);
+            ps.setLong(2, stuId);
+            ps.setString(3, text);
+            ps.executeUpdate();
+        }
+    }
+
+    private static void insertGhostRoom(Connection conn, String name, java.sql.Timestamp expiresAt) throws SQLException {
+        String sql = "INSERT INTO rooms (name, type, status, expires_at) VALUES (?, 'GHOST', 'ACTIVE', ?)";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, name);
+            ps.setTimestamp(2, expiresAt);
+            ps.executeUpdate();
         }
     }
 }

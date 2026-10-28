@@ -200,6 +200,9 @@ public class DoubtServlet extends HttpServlet {
         String subject = request.getParameter("subject");
         String title = request.getParameter("title");
         String description = request.getParameter("description");
+        if (description == null || description.trim().isEmpty()) {
+            description = request.getParameter("body");
+        }
 
         try {
             Doubt doubt = doubtService.postDoubt(current.getId(), subject, title, description);

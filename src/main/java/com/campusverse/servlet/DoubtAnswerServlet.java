@@ -44,6 +44,12 @@ public class DoubtAnswerServlet extends HttpServlet {
 
         String doubtIdParam = request.getParameter("doubtId");
         String answerText = request.getParameter("answerText");
+        if (answerText == null || answerText.trim().isEmpty()) {
+            answerText = request.getParameter("reply");
+        }
+        if (answerText == null || answerText.trim().isEmpty()) {
+            answerText = request.getParameter("content");
+        }
 
         if (doubtIdParam == null || doubtIdParam.trim().isEmpty()) {
             response.sendError(HttpServletResponse.SC_BAD_REQUEST, "Missing doubtId");
