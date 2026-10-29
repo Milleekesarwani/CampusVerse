@@ -40,7 +40,12 @@ try {
 }
 
 function save() {
-    localStorage.setItem('campusverse-v1', JSON.stringify(state));
+    try {
+        localStorage.setItem('campusverse-v1', JSON.stringify({
+            profile: state.profile,
+            connections: state.connections
+        }));
+    } catch (e) {}
 }
 
 function toast(t) {
@@ -77,81 +82,30 @@ let filter = 'All';
 let search = '';
 const subjects = ['DSA', 'Java', 'DBMS', 'General'];
 
-// Study rooms database ID map
+// Dynamic study room map
 let roomMap = { 'Java': 1, 'DSA': 2, 'DBMS': 3, 'General': 4 };
 
-// Known peer profiles for VibeMatch
-let peers = [
-    { name: 'Aman Sharma', initials: 'AS', color: 'peach', interests: ['Java', 'React', 'Hackathons'], bio: 'Building things. Breaking things. Learning both ways.', year: 'CSE · 2nd year' },
-    { name: 'Riya Verma', initials: 'RV', color: 'pink', interests: ['Java', 'DSA', 'Hackathons'], bio: 'One more problem before I call it a day.', year: 'CSE · 2nd year' },
-    { name: 'Kabir Singh', initials: 'KS', color: 'blue', interests: ['UI/UX', 'React', 'Gaming'], bio: 'Good interfaces and late-night gaming sessions.', year: 'CSE · 3rd year' },
-    { name: 'Ananya Das', initials: 'AD', color: 'lime', interests: ['DBMS', 'Python', 'DSA'], bio: 'Turning confusing concepts into little diagrams.', year: 'CSE · 2nd year' }
+// Peer list populated dynamically from server
+let serverPeers = [];
+let defaultPeers = [
+    { id: 37, name: 'Aman Sharma', initials: 'AS', color: 'peach', score: 67, interests: ['Java', 'React', 'Hackathons'], sharedInterests: ['Java', 'Hackathons'], bio: 'Building things. Breaking things. Learning both ways.', year: 'CSE · 2nd year' },
+    { id: 38, name: 'Riya Verma', initials: 'RV', color: 'pink', score: 100, interests: ['Java', 'DSA', 'Hackathons'], sharedInterests: ['Java', 'DSA', 'Hackathons'], bio: 'One more problem before I call it a day.', year: 'CSE · 2nd year' },
+    { id: 39, name: 'Kabir Singh', initials: 'KS', color: 'blue', score: 0, interests: ['UI/UX', 'React', 'Gaming'], sharedInterests: [], bio: 'Good interfaces and late-night gaming sessions.', year: 'CSE · 3rd year' },
+    { id: 40, name: 'Ananya Das', initials: 'AD', color: 'lime', score: 25, interests: ['DBMS', 'Python', 'DSA'], sharedInterests: ['DSA'], bio: 'Turning confusing concepts into little diagrams.', year: 'CSE · 2nd year' }
 ];
 
-// Fallback seed doubts
-const seedDoubts = [
-    {
-        id: 'seed1',
-        subject: 'Java',
-        title: 'Can someone explain method overloading with a real-life example?',
-        body: 'I understand the syntax, but when should I use it instead of creating a new method?',
-        author: 'Riya Verma',
-        resolved: false,
-        replies: [{ author: 'Aman Sharma', text: 'Use overloading when the operation is the same but the input differs — like add(int, int) and add(double, double). Java picks the method from the argument types.' }]
-    },
-    {
-        id: 'seed2',
-        subject: 'DBMS',
-        title: 'A simple way to remember 2NF vs 3NF?',
-        body: 'Partial and transitive dependencies keep getting mixed up in my head. Any good examples?',
-        author: 'Ananya Das',
-        resolved: false,
-        replies: []
-    },
-    {
-        id: 'seed3',
-        subject: 'DSA',
-        title: 'Why is binary search O(log n)?',
-        body: 'What happens to the search space in each step?',
-        author: 'Kabir Singh',
-        resolved: true,
-        replies: [{ author: 'Riya Verma', text: 'Each comparison halves the search space. After k steps, n / 2^k = 1, so k = log₂(n).' }]
-    }
-];
-
-let baseTime = Number(localStorage.getItem('campusverse-start')) || Date.now();
-localStorage.setItem('campusverse-start', baseTime);
-
-const seedGhosts = [
-    { id: 'dbms', title: 'DBMS: the last-minute club', topic: 'Normalization, SQL & a little moral support.', subject: 'DBMS', expires: baseTime + 7200000, members: 8 },
-    { id: 'algo', title: 'Two pointers, one brain cell', topic: 'Let’s work through the DSA practice sheet.', subject: 'DSA', expires: baseTime + 14400000, members: 5 },
-    { id: 'hack', title: 'Hackathon idea jam', topic: 'No bad ideas. Just bring your curiosity.', subject: 'General', expires: baseTime + 28800000, members: 6 }
-];
-
-// Combine remote/local records
-function allDoubts() {
-    if (state.dbDoubts && state.dbDoubts.length > 0) {
-        return state.dbDoubts;
-    }
-    return [...state.doubts, ...seedDoubts.map(d => ({ ...d, ...(state['doubt-' + d.id] || {}) }))];
+function getPeers() {
+    if (serverPeers && serverPeers.length > 0) return serverPeers;
+    return defaultPeers;
 }
 
-function updateDoubt(d) {
-    if (String(d.id).startsWith('seed')) {
-        state['doubt-' + d.id] = d;
-    } else {
-        const idx = state.doubts.findIndex(x => String(x.id) === String(d.id));
-        if (idx !== -1) state.doubts[idx] = d;
-        else state.doubts.unshift(d);
-    }
-    save();
+// Doubts & GhostRooms helpers
+function allDoubts() {
+    return state.dbDoubts || [];
 }
 
 function allGhosts() {
-    if (state.dbGhosts && state.dbGhosts.length > 0) {
-        return state.dbGhosts;
-    }
-    return [...state.ghosts, ...seedGhosts];
+    return state.dbGhosts || [];
 }
 
 // Common heading template
@@ -174,7 +128,6 @@ function navigate(page) {
 }
 
 function render() {
-    // 1. Render navigation
     const navEl = $('#nav');
     if (navEl) {
         navEl.innerHTML = navs.map(([key, icon, label]) =>
@@ -185,7 +138,6 @@ function render() {
         ).join('');
     }
 
-    // 2. Breadcrumbs & Profile headers
     const crumbEl = $('#crumb');
     if (crumbEl) {
         crumbEl.textContent = navs.find(x => x[0] === current)?.[2] || (current === 'saved' ? 'Your activity' : 'Your profile');
@@ -199,7 +151,6 @@ function render() {
     const sidebarAvatar = $('#sidebar-avatar');
     if (sidebarAvatar) sidebarAvatar.textContent = userInits;
 
-    // 3. Render View
     const views = {
         home: home,
         chat: chat,
@@ -226,6 +177,7 @@ function home() {
     const firstName = esc(name().replace(/_/g, ' ').split(/\s+/)[0] || 'Friend');
     const openDoubtsCount = allDoubts().filter(d => !d.resolved).length;
     const liveGhostsCount = allGhosts().filter(g => g.expires > Date.now()).length;
+    const peerCount = getPeers().length;
 
     return heading(
         `Hey ${firstName}, find your people <span style="color:#acb77a">✳</span>`,
@@ -251,7 +203,7 @@ function home() {
     <section class="stats">
         ${[
             ['♧', 4, 'Study rooms'],
-            ['✳', peers.length, 'People to discover'],
+            ['✳', peerCount, 'People to discover'],
             ['◈', openDoubtsCount, 'Open conversations'],
             ['◷', liveGhostsCount, 'GhostRooms live']
         ].map(([i, n, t]) => `
@@ -315,16 +267,25 @@ function home() {
                 <button class="text-link" onclick="navigate('doubts')">DoubtDrop ↗</button>
             </div>
             <div class="panel">
-                <div class="doubt-teaser">
-                    <span class="chip">Java</span>
-                    <span class="chip green">Open for ideas</span>
-                    <h3>Can someone explain method overloading with a real-life example?</h3>
-                    <div class="doubt-meta">
-                        <span><span class="avatar pink" style="width:20px;height:20px;font-size:7px">RV</span> &nbsp; Riya Verma</span>
-                        <button onclick="viewDoubt('seed1')">1 reply ↗</button>
-                    </div>
-                </div>
-                <p class="encourage">Know the answer? <button onclick="viewDoubt('seed1')">Be someone’s lightbulb moment ↗</button></p>
+                ${(() => {
+                    const firstDoubt = allDoubts()[0];
+                    if (!firstDoubt) {
+                        return '<p class="muted">No open doubts right now. Drop one in DoubtDrop!</p>';
+                    }
+                    const repliesCount = firstDoubt.replies ? firstDoubt.replies.length : (firstDoubt.repliesCount || 0);
+                    return `
+                        <div class="doubt-teaser">
+                            <span class="chip">${esc(firstDoubt.subject)}</span>
+                            <span class="chip green">${firstDoubt.resolved ? '✓ Resolved' : 'Open for ideas'}</span>
+                            <h3>${esc(firstDoubt.title)}</h3>
+                            <div class="doubt-meta">
+                                <span><span class="avatar pink" style="width:20px;height:20px;font-size:7px">${esc(initials(firstDoubt.author))}</span> &nbsp; ${esc(firstDoubt.author)}</span>
+                                <button onclick="viewDoubt('${firstDoubt.id}')">${repliesCount} ${repliesCount === 1 ? 'reply' : 'replies'} ↗</button>
+                            </div>
+                        </div>
+                        <p class="encourage">Know the answer? <button onclick="viewDoubt('${firstDoubt.id}')">Be someone’s lightbulb moment ↗</button></p>
+                    `;
+                })()}
             </div>
         </section>
     </div>`;
@@ -363,31 +324,11 @@ function chat() {
                 <small>${expired ? 'This room has expired. You can still read the conversation.' : 'A little curiosity goes a long way. Be kind, always.'}</small>
             </div>
             <div class="messages" id="chat-messages">
-                ${!g ? `
-                    <div class="message">
-                        <span class="avatar pink">RV</span>
-                        <div>
-                            <b>Riya Verma</b><time>Earlier</time>
-                            <div class="bubble">${
-                                room === 'DSA' ? 'Anyone up for working through binary search together? I keep mixing up the boundary conditions.' :
-                                room === 'Java' ? 'Welcome to the Java Junction! What are you working on today?' :
-                                room === 'DBMS' ? 'Revision check-in: joins, normalization, or transactions? Where should we start?' :
-                                'Hey everyone! What’s one thing you learned today?'
-                            }</div>
-                        </div>
+                ${msgs.length === 0 ? `
+                    <div class="empty" style="padding:40px 20px;">
+                        No messages in #${esc(room)} yet. Be the first to start the conversation!
                     </div>
-                    <div class="message">
-                        <span class="avatar peach">AS</span>
-                        <div>
-                            <b>Aman Sharma</b><time>Earlier</time>
-                            <div class="bubble">${
-                                room === 'DSA' ? 'I’m in! Start with low = 0 and high = n − 1, and keep going while low ≤ high. Let’s try a small example.' :
-                                'Happy to help! Drop your questions here and we can figure them out together.'
-                            }</div>
-                        </div>
-                    </div>
-                ` : '<p class="muted">This room is temporary. Make the conversation count.</p>'}
-                ${msgs.map(m => {
+                ` : msgs.map(m => {
                     const isMine = m.author === name() || m.senderNickname === name();
                     const color = isMine ? 'lime' : 'purple';
                     return `
@@ -448,37 +389,32 @@ async function loadRemoteMessages() {
                     createdAt: m.createdAt
                 }));
                 state.messages[key] = mapped;
-                save();
 
-                // Append or refresh without losing input focus
                 const msgBox = $('#chat-messages');
                 if (msgBox) {
                     const wasAtBottom = (msgBox.scrollHeight - msgBox.scrollTop - msgBox.clientHeight) < 60;
-                    // Re-render message list
-                    const rendered = (key && !ghostId ? `
-                        <div class="message"><span class="avatar pink">RV</span><div><b>Riya Verma</b><time>Earlier</time><div class="bubble">${room === 'DSA' ? 'Anyone up for working through binary search together? I keep mixing up boundary conditions.' : 'Welcome to the room! Drop your questions here.'}</div></div>
-                        <div class="message"><span class="avatar peach">AS</span><div><b>Aman Sharma</b><time>Earlier</time><div class="bubble">Happy to collaborate. Let’s work through examples together.</div></div>
-                    ` : '') + mapped.map(m => {
-                        const isMine = m.author === name() || m.senderNickname === name();
-                        const color = isMine ? 'lime' : 'purple';
-                        return `
-                            <div class="message ${isMine ? 'mine' : ''}">
-                                <span class="avatar ${color}">${esc(initials(m.author))}</span>
-                                <div>
-                                    <b>${esc(m.author)}</b><time>${esc(m.time)}</time>
-                                    <div class="bubble">${esc(m.text)}</div>
+                    if (mapped.length === 0) {
+                        msgBox.innerHTML = `<div class="empty" style="padding:40px 20px;">No messages in #${esc(room)} yet. Be the first to start the conversation!</div>`;
+                    } else {
+                        msgBox.innerHTML = mapped.map(m => {
+                            const isMine = m.author === name() || m.senderNickname === name();
+                            const color = isMine ? 'lime' : 'purple';
+                            return `
+                                <div class="message ${isMine ? 'mine' : ''}">
+                                    <span class="avatar ${color}">${esc(initials(m.author))}</span>
+                                    <div>
+                                        <b>${esc(m.author)}</b><time>${esc(m.time)}</time>
+                                        <div class="bubble">${esc(m.text)}</div>
+                                    </div>
                                 </div>
-                            </div>
-                        `;
-                    }).join('');
-                    msgBox.innerHTML = rendered;
+                            `;
+                        }).join('');
+                    }
                     if (wasAtBottom) msgBox.scrollTop = msgBox.scrollHeight;
                 }
             }
         }
-    } catch (e) {
-        // Silently tolerate temporary polling errors
-    }
+    } catch (e) {}
 }
 
 async function sendMessage(e) {
@@ -498,18 +434,6 @@ async function sendMessage(e) {
 
     const key = ghostId || room;
     const numId = ghostId ? parseInt(ghostId.replace(/\D/g, '') || '999') : (roomMap[room] || 1);
-
-    // Optimistically show message
-    const tempMsg = {
-        author: name(),
-        senderNickname: name(),
-        text,
-        content: text,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    };
-    (state.messages[key] ??= []).push(tempMsg);
-    save();
-    render();
 
     try {
         const token = getCsrfToken();
@@ -534,28 +458,34 @@ async function sendMessage(e) {
             toast(errJson.error || 'Failed to send message.');
         } else {
             if (input) input.value = '';
-            loadRemoteMessages();
+            await loadRemoteMessages();
         }
     } catch (err) {
-        toast('Message saved locally (offline mode).');
+        toast('Connection error. Message draft preserved.');
     }
 }
 
 // --- View 3: VibeMatch ---
 function match() {
     const chosen = state.profile.interests;
-    const list = peers.map(p => {
-        const intersect = p.interests.filter(i => chosen.includes(i)).length;
-        const union = new Set([...p.interests, ...chosen]).size;
-        const score = union === 0 ? 0 : Math.round((intersect / union) * 100);
-        return { ...p, score };
+    const peersList = getPeers();
+
+    const list = peersList.map(p => {
+        let score = p.score;
+        if (score === undefined) {
+            const intersect = p.interests.filter(i => chosen.includes(i)).length;
+            const union = new Set([...p.interests, ...chosen]).size;
+            score = union === 0 ? 0 : Math.round((intersect / union) * 100);
+        }
+        const color = p.color || (['peach', 'pink', 'blue', 'lime'][Math.abs(p.name.length) % 4]);
+        return { ...p, score, color };
     }).sort((a, b) => b.score - a.score);
 
     return heading(
         'Your people are out there.',
         'Start with what you love. Find someone who gets it.'
     ) +
-    `<div class="info-banner">VibeMatch compares shared interests using intersection ÷ union. Choose your interests below to see matches update.</div>
+    `<div class="info-banner">VibeMatch calculates interest overlap using Jaccard Similarity (Intersection ÷ Union). Choose your interests below.</div>
     <div class="section-heading">
         <h2>What’s your thing?</h2>
         <span class="muted">Select a few. We’ll find the overlap.</span>
@@ -568,15 +498,17 @@ function match() {
         `).join('')}
     </div>
     <div class="card-grid">
-        ${list.map(p => `
+        ${list.length === 0 ? `
+            <div class="empty">No classmates discovered yet. Invite peers to explore CampusVerse!</div>
+        ` : list.map(p => `
             <article class="person">
                 <span class="match">${p.score}% match</span>
-                <span class="avatar ${p.color}">${p.initials}</span>
-                <h3>${p.name}</h3>
-                <span class="muted">${p.year}</span>
-                <p>${p.bio}</p>
+                <span class="avatar ${p.color}">${esc(p.initials)}</span>
+                <h3>${esc(p.name)}</h3>
+                <span class="muted">${esc(p.year || 'CSE · 2nd year')}</span>
+                <p>${esc(p.bio || 'Building things. Learning together on CampusVerse.')}</p>
                 <div>
-                    ${p.interests.map(i => `<span class="chip ${chosen.includes(i) ? 'green' : ''}">${i}</span>`).join('')}
+                    ${p.interests.map(i => `<span class="chip ${chosen.includes(i) ? 'green' : ''}">${esc(i)}</span>`).join('')}
                 </div>
                 <button class="primary" onclick="connect('${p.initials}')">
                     ${state.connections.includes(p.initials) ? '✓ Saved to your circle' : 'Add to my circle ↗'}
@@ -592,7 +524,6 @@ async function toggleInterest(i) {
     save();
     render();
 
-    // Sync interests to backend
     try {
         const token = getCsrfToken();
         const p = new URLSearchParams();
@@ -610,6 +541,23 @@ async function toggleInterest(i) {
             },
             body: p.toString()
         });
+
+        await fetchVibeMatches();
+        if (current === 'match') render();
+    } catch (e) {}
+}
+
+async function fetchVibeMatches() {
+    try {
+        const res = await fetch(`${ctx}/vibematch?json=true`, {
+            headers: { 'Accept': 'application/json' }
+        });
+        if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data) && data.length > 0) {
+                serverPeers = data;
+            }
+        }
     } catch (e) {}
 }
 
@@ -636,6 +584,8 @@ function countdown(t) {
 }
 
 function ghosts() {
+    const ghostList = allGhosts();
+
     return heading(
         'Good conversations. Limited editions.',
         'A room for right now. Revision, ideas, or whatever’s on your mind.',
@@ -643,7 +593,9 @@ function ghosts() {
     ) +
     `<div class="info-banner">GhostRooms close when their timer runs out. Messages stay readable, but no new messages can be sent.</div>
     <div class="card-grid">
-        ${allGhosts().map(g => `
+        ${ghostList.length === 0 ? `
+            <div class="empty">No active GhostRooms right now. Create one above to start a study sprint!</div>
+        ` : ghostList.map(g => `
             <article class="ghost-card">
                 <div class="ghost" aria-hidden="true"></div>
                 <h3>${esc(g.title)}</h3>
@@ -707,18 +659,6 @@ async function submitGhost(e) {
     const hours = f.get('hours') || '2';
     if (!title || !topic) return;
 
-    const newGhost = {
-        id: 'g' + Date.now(),
-        title,
-        topic,
-        subject,
-        expires: Date.now() + Number(hours) * 3600000,
-        members: 1
-    };
-    state.ghosts.unshift(newGhost);
-    save();
-
-    // Call server to persist room
     try {
         const token = getCsrfToken();
         const p = new URLSearchParams();
@@ -738,11 +678,34 @@ async function submitGhost(e) {
             },
             body: p.toString()
         });
+
+        await fetchGhostRooms();
     } catch (err) {}
 
     $('#dialog').close();
     navigate('ghost');
     toast('Your GhostRoom is ready.');
+}
+
+async function fetchGhostRooms() {
+    try {
+        const res = await fetch(`${ctx}/ghostrooms?json=true`, {
+            headers: { 'Accept': 'application/json' }
+        });
+        if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data)) {
+                state.dbGhosts = data.map(g => ({
+                    id: String(g.id),
+                    title: g.title,
+                    topic: g.topic || 'Live temporary study room',
+                    subject: g.subject || 'General',
+                    expires: g.expires,
+                    members: g.members || 4
+                }));
+            }
+        }
+    } catch (e) {}
 }
 
 // --- View 5: DoubtDrop ---
@@ -825,21 +788,6 @@ async function submitDoubt(e) {
     const body = f.get('body').trim();
     if (!title || !body) return;
 
-    const newDoubt = {
-        id: 'd' + Date.now(),
-        subject,
-        title,
-        body,
-        description: body,
-        author: name(),
-        owned: true,
-        resolved: false,
-        replies: []
-    };
-    state.doubts.unshift(newDoubt);
-    save();
-
-    // Post to Java backend
     try {
         const token = getCsrfToken();
         const p = new URLSearchParams();
@@ -850,7 +798,7 @@ async function submitDoubt(e) {
         p.append('body', body);
         p.append('csrfToken', token);
 
-        const res = await fetch(`${ctx}/doubts`, {
+        await fetch(`${ctx}/doubts`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded',
@@ -859,15 +807,36 @@ async function submitDoubt(e) {
             },
             body: p.toString()
         });
-        if (res.ok) {
-            const data = await res.json();
-            if (data.id) newDoubt.id = data.id;
-        }
+
+        await fetchDoubts();
     } catch (err) {}
 
     $('#dialog').close();
     navigate('doubts');
     toast('Your question is out there.');
+}
+
+async function fetchDoubts() {
+    try {
+        const res = await fetch(`${ctx}/doubts?json=true`, {
+            headers: { 'Accept': 'application/json' }
+        });
+        if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data)) {
+                state.dbDoubts = data.map(d => ({
+                    id: d.id,
+                    subject: d.subject,
+                    title: d.title,
+                    body: d.body || d.description,
+                    author: d.author,
+                    resolved: d.resolved,
+                    owned: d.owned,
+                    replies: d.replies || []
+                }));
+            }
+        }
+    } catch (e) {}
 }
 
 function viewDoubt(id) {
@@ -906,18 +875,10 @@ async function replyDoubt(e, id) {
     const val = new FormData(e.target).get('reply').trim();
     if (!val) return;
 
-    const d = allDoubts().find(d => String(d.id) === String(id));
-    if (!d) return;
-
-    d.replies ??= [];
-    d.replies.push({ author: name(), text: val, answerText: val });
-    updateDoubt(d);
-
-    // Call server API
     try {
         const token = getCsrfToken();
         const p = new URLSearchParams();
-        p.append('doubtId', String(d.id).replace(/\D/g, '') || '1');
+        p.append('doubtId', String(id).replace(/\D/g, '') || '1');
         p.append('answerText', val);
         p.append('reply', val);
         p.append('csrfToken', token);
@@ -931,6 +892,8 @@ async function replyDoubt(e, id) {
             },
             body: p.toString()
         });
+
+        await fetchDoubts();
     } catch (err) {}
 
     $('#dialog').close();
@@ -940,18 +903,11 @@ async function replyDoubt(e, id) {
 }
 
 async function resolveDoubt(id) {
-    const d = allDoubts().find(d => String(d.id) === String(id));
-    if (!d) return;
-
-    d.resolved = !d.resolved;
-    d.status = d.resolved ? 'RESOLVED' : 'OPEN';
-    updateDoubt(d);
-
     try {
         const token = getCsrfToken();
         const p = new URLSearchParams();
         p.append('action', 'resolve');
-        p.append('doubtId', String(d.id).replace(/\D/g, '') || '1');
+        p.append('doubtId', String(id).replace(/\D/g, '') || '1');
         p.append('csrfToken', token);
 
         await fetch(`${ctx}/doubts`, {
@@ -963,11 +919,13 @@ async function resolveDoubt(id) {
             },
             body: p.toString()
         });
+
+        await fetchDoubts();
     } catch (err) {}
 
     $('#dialog').close();
     render();
-    toast(d.resolved ? 'A lightbulb moment! Marked resolved.' : 'Question reopened.');
+    toast('Doubt status updated.');
 }
 
 // --- View 6: Profile ---
@@ -1024,6 +982,7 @@ async function saveProfile(e) {
             },
             body: p.toString()
         });
+        await fetchVibeMatches();
     } catch (err) {}
 
     toast('Looking like you. Profile saved.');
@@ -1031,7 +990,7 @@ async function saveProfile(e) {
 
 // --- View 7: Saved Activity ---
 function saved() {
-    const savedPeers = peers.filter(p => state.connections.includes(p.initials));
+    const savedPeers = getPeers().filter(p => state.connections.includes(p.initials));
     const userDoubts = allDoubts().filter(d => d.owned || d.author === name());
 
     return heading(
@@ -1042,10 +1001,10 @@ function saved() {
         <h2>Your circle</h2>
         ${savedPeers.length ? savedPeers.map(p => `
             <div class="room-row">
-                <span class="avatar ${p.color}">${p.initials}</span>
+                <span class="avatar ${p.color || 'purple'}">${esc(p.initials)}</span>
                 <div class="room-info">
-                    <b>${p.name}</b>
-                    <p>${p.interests.join(' · ')}</p>
+                    <b>${esc(p.name)}</b>
+                    <p>${esc((p.interests || []).join(' · '))}</p>
                 </div>
                 <button class="room-action" onclick="navigate('match')">View matches ↗</button>
             </div>
@@ -1059,7 +1018,6 @@ function saved() {
 
 // --- Initialization & Global Listeners ---
 
-// 1. Ticking countdown every second
 setInterval(() => {
     document.querySelectorAll('[data-expiry]').forEach(el => {
         el.textContent = countdown(Number(el.dataset.expiry));
@@ -1073,7 +1031,6 @@ setInterval(() => {
     }
 }, 1000);
 
-// 2. Hash router listener
 window.addEventListener('hashchange', () => {
     const p = location.hash.slice(1);
     if (p && p !== current) {
@@ -1081,56 +1038,30 @@ window.addEventListener('hashchange', () => {
     }
 });
 
-// 3. Modal backdrop dismiss
 $('#dialog')?.addEventListener('click', e => {
     if (e.target === $('#dialog')) $('#dialog').close();
 });
 
-// 4. Initial Render
 current = location.hash.slice(1) || 'home';
 render();
 
-// 5. Initial background fetch for real server data
-(async function initServerData() {
-    try {
-        // Fetch doubts
-        const doubtsRes = await fetch(`${ctx}/doubts?json=true`);
-        if (doubtsRes.ok) {
-            const dbD = await doubtsRes.json();
-            if (Array.isArray(dbD) && dbD.length > 0) {
-                state.dbDoubts = dbD.map(d => ({
-                    id: d.id,
-                    subject: d.subject,
-                    title: d.title,
-                    body: d.body || d.description,
-                    author: d.author,
-                    resolved: d.resolved,
-                    owned: d.owned,
-                    replies: d.replies || []
-                }));
-                save();
-                if (current === 'doubts' || current === 'home') render();
-            }
-        }
-    } catch (e) {}
-
-    try {
-        // Fetch ghost rooms
-        const ghostsRes = await fetch(`${ctx}/ghostrooms?json=true`);
-        if (ghostsRes.ok) {
-            const dbG = await ghostsRes.json();
-            if (Array.isArray(dbG) && dbG.length > 0) {
-                state.dbGhosts = dbG.map(g => ({
-                    id: String(g.id),
-                    title: g.title,
-                    topic: g.topic || 'Live temporary study room',
-                    subject: g.subject || 'General',
-                    expires: g.expires,
-                    members: g.members || 4
-                }));
-                save();
-                if (current === 'ghost' || current === 'home') render();
-            }
-        }
-    } catch (e) {}
+// Fetch initial data from server on startup
+(async function init() {
+    await Promise.all([
+        fetchDoubts(),
+        fetchGhostRooms(),
+        fetchVibeMatches(),
+        (async () => {
+            try {
+                const res = await fetch(`${ctx}/chat?rooms=true`, { headers: { 'Accept': 'application/json' } });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (Array.isArray(data)) {
+                        data.forEach(r => { roomMap[r.name] = r.id; });
+                    }
+                }
+            } catch (e) {}
+        })()
+    ]);
+    render();
 })();
