@@ -1,5 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
+cd /d "%~dp0"
 
 rem ========================================================
 rem CampusVerse Lite - Server Startup Script
@@ -79,7 +80,14 @@ if not exist "%CATALINA_HOME%\bin\catalina.bat" (
     exit /b 1
 )
 
-rem --- 3. Clean stale DB locks & duplicate ROOT listeners ---
+rem --- 3. Check and clean port 8080 collision ---
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr /r ":8080 .*LISTENING"') do (
+    echo [WARNING] Port 8080 is currently occupied by PID %%a. Terminating stale process...
+    taskkill /f /pid %%a >nul 2>&1
+    timeout /t 1 >nul
+)
+
+rem --- 4. Clean stale DB locks & duplicate ROOT listeners ---
 if exist "data\campusverse_db.lock.db" (
     del /f /q "data\campusverse_db.lock.db" 2>nul
 )
@@ -91,13 +99,19 @@ if exist "%CATALINA_HOME%\webapps\ROOT\WEB-INF\lib" (
     rmdir /s /q "%CATALINA_HOME%\webapps\ROOT\WEB-INF\lib" 2>nul
 )
 
-rem --- 4. Deploy WAR if present in target ---
+rem --- 5. Configure absolute database path with AUTO_SERVER mode ---
+if not exist "%~dp0data" mkdir "%~dp0data" 2>nul
+set "DATA_DIR=%~dp0data"
+set "DATA_DIR=!DATA_DIR:\=/!"
+set "JAVA_OPTS=%JAVA_OPTS% -Dcampusverse.db.url=jdbc:h2:!DATA_DIR!/campusverse_db;DB_CLOSE_DELAY=-1;AUTO_SERVER=TRUE"
+
+rem --- 6. Deploy WAR if present in target ---
 if exist "target\campusverse-lite.war" (
     echo [INFO] Deploying target\campusverse-lite.war to %CATALINA_HOME%\webapps...
     copy /y "target\campusverse-lite.war" "%CATALINA_HOME%\webapps\campusverse-lite.war" >nul
 )
 
-rem --- 5. Ensure ROOT redirects to /campusverse-lite/ ---
+rem --- 7. Ensure ROOT redirects to /campusverse-lite/ ---
 if not exist "%CATALINA_HOME%\webapps\ROOT" (
     mkdir "%CATALINA_HOME%\webapps\ROOT" 2>nul
 )
@@ -109,6 +123,7 @@ echo ========================================================
 echo Starting CampusVerse Lite on Apache Tomcat 10.1...
 echo JAVA_HOME:     %JAVA_HOME%
 echo CATALINA_HOME: %CATALINA_HOME%
+echo Database:      jdbc:h2:!DATA_DIR!/campusverse_db (AUTO_SERVER=TRUE)
 echo Local URL:     http://localhost:8080/campusverse-lite/
 echo Root URL:      http://localhost:8080/
 echo ========================================================

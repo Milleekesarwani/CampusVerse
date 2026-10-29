@@ -1,5 +1,6 @@
 package com.campusverse.util;
 
+import java.io.File;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -16,9 +17,11 @@ public class DatabaseManager {
 
     private static final Logger LOGGER = Logger.getLogger(DatabaseManager.class.getName());
 
-    private static final String DEFAULT_DB_URL = "jdbc:h2:./data/campusverse_db;DB_CLOSE_DELAY=-1";
+    private static final String DEFAULT_DB_URL = "jdbc:h2:./data/campusverse_db;DB_CLOSE_DELAY=-1;AUTO_SERVER=TRUE";
     private static final String DB_USER = "sa";
     private static final String DB_PASSWORD = "";
+
+    private static volatile String resolvedDbUrl = null;
 
     static {
         try {
@@ -30,7 +33,61 @@ public class DatabaseManager {
     }
 
     public static String getDatabaseUrl() {
-        return System.getProperty("campusverse.db.url", DEFAULT_DB_URL);
+        String prop = System.getProperty("campusverse.db.url");
+        if (prop != null && !prop.trim().isEmpty()) {
+            return prop.trim();
+        }
+
+        if (resolvedDbUrl != null) {
+            return resolvedDbUrl;
+        }
+
+        synchronized (DatabaseManager.class) {
+            if (resolvedDbUrl != null) {
+                return resolvedDbUrl;
+            }
+
+            String dataDirProp = System.getProperty("campusverse.data.dir");
+            File dataDir = null;
+            if (dataDirProp != null && !dataDirProp.trim().isEmpty()) {
+                dataDir = new File(dataDirProp.trim());
+            } else {
+                try {
+                    File localDir = new File(".").getCanonicalFile();
+                    String localPath = localDir.getAbsolutePath().toLowerCase();
+                    if (!localPath.contains("system32") && !localPath.contains("windows")) {
+                        File candidate = new File(localDir, "data");
+                        if (candidate.exists() || candidate.mkdirs() || candidate.canWrite()) {
+                            dataDir = candidate;
+                        }
+                    }
+                } catch (Exception ignored) {}
+
+                if (dataDir == null) {
+                    String catalinaBase = System.getProperty("catalina.base");
+                    if (catalinaBase != null && !catalinaBase.trim().isEmpty()) {
+                        File catData = new File(catalinaBase, "data");
+                        catData.mkdirs();
+                        dataDir = catData;
+                    }
+                }
+
+                if (dataDir == null) {
+                    File homeData = new File(System.getProperty("user.home"), ".campusverse/data");
+                    homeData.mkdirs();
+                    dataDir = homeData;
+                }
+            }
+
+            if (!dataDir.exists()) {
+                dataDir.mkdirs();
+            }
+
+            String normalizedPath = new File(dataDir, "campusverse_db").getAbsolutePath().replace('\\', '/');
+            resolvedDbUrl = "jdbc:h2:" + normalizedPath + ";DB_CLOSE_DELAY=-1;AUTO_SERVER=TRUE";
+            LOGGER.info("Resolved CampusVerse H2 database URL: " + resolvedDbUrl);
+            return resolvedDbUrl;
+        }
     }
 
     public static Connection getConnection() throws SQLException {

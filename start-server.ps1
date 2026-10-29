@@ -4,6 +4,7 @@
 #>
 
 $ErrorActionPreference = "Stop"
+Set-Location $PSScriptRoot
 
 # Auto-detect JAVA_HOME if not set
 if (-not $env:JAVA_HOME) {
@@ -60,6 +61,15 @@ if (-not (Test-Path $catalinaBat)) {
     exit 1
 }
 
+# Check and clean port 8080 collision
+$port8080 = Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue
+if ($port8080) {
+    $stalePid = $port8080.OwningProcess | Select-Object -Unique
+    Write-Host "[WARNING] Port 8080 is currently occupied by PID $stalePid. Terminating stale process..." -ForegroundColor Yellow
+    Stop-Process -Id $stalePid -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 1
+}
+
 # Clean stale DB lock
 if (Test-Path "data\campusverse_db.lock.db") {
     Remove-Item "data\campusverse_db.lock.db" -Force -ErrorAction SilentlyContinue
@@ -74,6 +84,13 @@ $rootLib = Join-Path $env:CATALINA_HOME "webapps\ROOT\WEB-INF\lib"
 if (Test-Path $rootLib) {
     Remove-Item -Recurse -Force $rootLib -ErrorAction SilentlyContinue
 }
+
+# Configure absolute database path with AUTO_SERVER mode
+if (-not (Test-Path "data")) {
+    New-Item -ItemType Directory -Path "data" -Force | Out-Null
+}
+$dbPath = "$($PSScriptRoot -replace '\\','/')/data/campusverse_db"
+$env:JAVA_OPTS = "$env:JAVA_OPTS -Dcampusverse.db.url=jdbc:h2:$dbPath;DB_CLOSE_DELAY=-1;AUTO_SERVER=TRUE"
 
 # Ensure ROOT index.html redirects to /campusverse-lite/
 $rootIndex = Join-Path $env:CATALINA_HOME "webapps\ROOT\index.html"
@@ -105,6 +122,7 @@ Write-Host "========================================================" -Foregroun
 Write-Host "Starting CampusVerse Lite on Apache Tomcat 10.1..." -ForegroundColor Green
 Write-Host "JAVA_HOME:     $($env:JAVA_HOME)" -ForegroundColor Gray
 Write-Host "CATALINA_HOME: $($env:CATALINA_HOME)" -ForegroundColor Gray
+Write-Host "Database:      jdbc:h2:$dbPath (AUTO_SERVER=TRUE)" -ForegroundColor Gray
 Write-Host "Local URL:     http://localhost:8080/campusverse-lite/" -ForegroundColor Yellow
 Write-Host "Root URL:      http://localhost:8080/" -ForegroundColor Yellow
 Write-Host "========================================================" -ForegroundColor Cyan
