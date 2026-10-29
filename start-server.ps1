@@ -74,7 +74,8 @@ if (-not (Test-Path "data")) {
     New-Item -ItemType Directory -Path "data" -Force | Out-Null
 }
 $dbPath = "$($PSScriptRoot -replace '\\','/')/data/campusverse_db"
-$env:JAVA_OPTS = "$env:JAVA_OPTS -Dcampusverse.db.url=jdbc:h2:$dbPath;DB_CLOSE_DELAY=-1;AUTO_SERVER=TRUE"
+$env:CAMPUSVERSE_DATA_DIR = (Join-Path $PSScriptRoot "data")
+$env:CAMPUSVERSE_DB_URL = "jdbc:h2:$dbPath;DB_CLOSE_DELAY=-1;AUTO_SERVER=TRUE"
 
 # Build project with Maven and require WAR
 Write-Host "[INFO] Building CampusVerse Lite with Maven (mvn package -DskipTests)..." -ForegroundColor DarkCyan

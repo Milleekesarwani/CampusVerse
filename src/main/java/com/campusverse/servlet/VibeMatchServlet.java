@@ -62,9 +62,11 @@ public class VibeMatchServlet extends HttpServlet {
                     if (i > 0) sb.append(",");
                     sb.append("{")
                       .append("\"id\":").append(peer.getId()).append(",")
+                      .append("\"nickname\":\"").append(SecurityUtils.escapeJson(peer.getNickname())).append("\",")
                       .append("\"name\":\"").append(SecurityUtils.escapeJson(peerNick)).append("\",")
                       .append("\"initials\":\"").append(SecurityUtils.escapeJson(initials)).append("\",")
                       .append("\"score\":").append(m.getMatchPercentage()).append(",")
+                      .append("\"matchPercentage\":").append(m.getMatchPercentage()).append(",")
                       .append("\"year\":\"CSE · 2nd year\",")
                       .append("\"bio\":\"Building things. Learning together on CampusVerse.\",")
                       .append("\"interests\":[");

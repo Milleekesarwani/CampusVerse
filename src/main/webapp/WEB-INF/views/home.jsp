@@ -58,18 +58,81 @@
                 </div>
             <% } %>
 
-            <h2 style="font-family:Manrope,sans-serif; font-size: 20px; font-weight: 800; margin: 0 0 8px; letter-spacing: -0.5px;">Enter your campus corner</h2>
-            <p style="color: var(--muted); font-size: 12px; line-height: 1.6; margin: 0 0 20px;">Pick a student nickname to start collaborating. No password required.</p>
+            <div style="display: flex; gap: 8px; margin-bottom: 20px; background: #f3f0f7; padding: 4px; border-radius: 10px;">
+                <button type="button" id="tab-login-btn" onclick="switchAuthTab('login')"
+                        style="flex: 1; padding: 10px; border-radius: 8px; font-weight: 700; font-size: 12px; border: none; cursor: pointer; background: var(--surface, #fff); color: var(--text, #1e1b24); box-shadow: 0 2px 6px #0000000d;">
+                    Sign In
+                </button>
+                <button type="button" id="tab-reg-btn" onclick="switchAuthTab('register')"
+                        style="flex: 1; padding: 10px; border-radius: 8px; font-weight: 700; font-size: 12px; border: none; cursor: pointer; background: transparent; color: var(--muted, #646071);">
+                    Register
+                </button>
+            </div>
 
-            <form action="${pageContext.request.contextPath}/student" method="post" class="form-stack">
+            <!-- Sign In Form -->
+            <form id="form-login" action="${pageContext.request.contextPath}/student" method="post" class="form-stack">
                 <input type="hidden" name="action" value="login">
                 <input type="hidden" name="csrfToken" value="<%= csrfToken != null ? SecurityUtils.escapeHtml(csrfToken) : "" %>">
                 <label style="font-size: 10px; font-weight: 700; color: #5a5563; letter-spacing: 1px;">STUDENT NICKNAME
                     <input type="text" name="nickname" placeholder="e.g. AlexDev, Priya_J, CodeNinja"
-                           required maxlength="50" autocomplete="off" autofocus style="width: 100%;">
+                           required maxlength="50" autocomplete="username" autofocus style="width: 100%;">
                 </label>
-                <button type="submit" class="primary" style="width: 100%; text-align: center; margin-top: 6px; padding: 14px;">Enter CampusVerse ↗</button>
+                <label style="font-size: 10px; font-weight: 700; color: #5a5563; letter-spacing: 1px; margin-top: 10px;">PASSWORD
+                    <input type="password" name="password" placeholder="Enter your password"
+                           required minlength="6" maxlength="100" autocomplete="current-password" style="width: 100%;">
+                </label>
+                <button type="submit" class="primary" style="width: 100%; text-align: center; margin-top: 12px; padding: 14px;">Sign In to CampusVerse ↗</button>
             </form>
+
+            <!-- Register Form -->
+            <form id="form-register" action="${pageContext.request.contextPath}/student" method="post" class="form-stack" style="display: none;">
+                <input type="hidden" name="action" value="register">
+                <input type="hidden" name="csrfToken" value="<%= csrfToken != null ? SecurityUtils.escapeHtml(csrfToken) : "" %>">
+                <label style="font-size: 10px; font-weight: 700; color: #5a5563; letter-spacing: 1px;">CHOOSE A NICKNAME
+                    <input type="text" name="nickname" placeholder="e.g. AlexDev, Priya_J, CodeNinja"
+                           required maxlength="50" autocomplete="username" style="width: 100%;">
+                </label>
+                <label style="font-size: 10px; font-weight: 700; color: #5a5563; letter-spacing: 1px; margin-top: 10px;">CREATE PASSWORD
+                    <input type="password" name="password" placeholder="Minimum 6 characters"
+                           required minlength="6" maxlength="100" autocomplete="new-password" style="width: 100%;">
+                </label>
+                <label style="font-size: 10px; font-weight: 700; color: #5a5563; letter-spacing: 1px; margin-top: 10px;">CONFIRM PASSWORD
+                    <input type="password" name="confirmPassword" placeholder="Confirm your password"
+                           required minlength="6" maxlength="100" autocomplete="new-password" style="width: 100%;">
+                </label>
+                <button type="submit" class="primary" style="width: 100%; text-align: center; margin-top: 12px; padding: 14px;">Create Account &amp; Enter ↗</button>
+            </form>
+
+            <script>
+                function switchAuthTab(tab) {
+                    const loginForm = document.getElementById('form-login');
+                    const regForm = document.getElementById('form-register');
+                    const loginBtn = document.getElementById('tab-login-btn');
+                    const regBtn = document.getElementById('tab-reg-btn');
+                    if (tab === 'register') {
+                        loginForm.style.display = 'none';
+                        regForm.style.display = 'block';
+                        loginBtn.style.background = 'transparent';
+                        loginBtn.style.color = 'var(--muted, #646071)';
+                        loginBtn.style.boxShadow = 'none';
+                        regBtn.style.background = 'var(--surface, #fff)';
+                        regBtn.style.color = 'var(--text, #1e1b24)';
+                        regBtn.style.boxShadow = '0 2px 6px #0000000d';
+                    } else {
+                        loginForm.style.display = 'block';
+                        regForm.style.display = 'none';
+                        regBtn.style.background = 'transparent';
+                        regBtn.style.color = 'var(--muted, #646071)';
+                        regBtn.style.boxShadow = 'none';
+                        loginBtn.style.background = 'var(--surface, #fff)';
+                        loginBtn.style.color = 'var(--text, #1e1b24)';
+                        loginBtn.style.boxShadow = '0 2px 6px #0000000d';
+                    }
+                }
+                if (window.location.search.includes('tab=register')) {
+                    switchAuthTab('register');
+                }
+            </script>
         </div>
 
         <div style="max-width: 600px; width: 100%; margin: 28px auto 0; text-align: center;">

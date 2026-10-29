@@ -94,7 +94,8 @@ rem --- 4. Configure database path with AUTO_SERVER mode ---
 if not exist "%~dp0data" mkdir "%~dp0data" 2>nul
 set "DATA_DIR=%~dp0data"
 set "DATA_DIR=!DATA_DIR:\=/!"
-set "JAVA_OPTS=%JAVA_OPTS% -Dcampusverse.db.url=jdbc:h2:!DATA_DIR!/campusverse_db;DB_CLOSE_DELAY=-1;AUTO_SERVER=TRUE"
+set "CAMPUSVERSE_DATA_DIR=%~dp0data"
+set "CAMPUSVERSE_DB_URL=jdbc:h2:!DATA_DIR!/campusverse_db;DB_CLOSE_DELAY=-1;AUTO_SERVER=TRUE"
 
 rem --- 5. Build project with Maven and require WAR ---
 echo [INFO] Building CampusVerse Lite with Maven (mvn package -DskipTests)...

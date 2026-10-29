@@ -35,6 +35,16 @@ public class SecurityFilter implements Filter {
             httpResponse.setHeader("X-Content-Type-Options", "nosniff");
             httpResponse.setHeader("X-Frame-Options", "DENY");
             httpResponse.setHeader("X-XSS-Protection", "1; mode=block");
+            httpResponse.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+
+            boolean isSecure = false;
+            try {
+                isSecure = httpRequest.isSecure();
+            } catch (Throwable ignored) {}
+
+            if (isSecure || "https".equalsIgnoreCase(httpRequest.getHeader("X-Forwarded-Proto"))) {
+                httpResponse.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+            }
 
             // Ensure a session exists with a valid CSRF token on every request
             HttpSession session = httpRequest.getSession(true);
@@ -51,12 +61,12 @@ public class SecurityFilter implements Filter {
                 String servletPath = httpRequest.getServletPath();
                 String action = httpRequest.getParameter("action");
 
-                // Check if this is the initial unauthenticated nickname-entry flow
-                boolean isInitialLogin = "/student".equals(servletPath)
-                        && (action == null || "login".equalsIgnoreCase(action))
+                // Check if this is the initial unauthenticated authentication flow (login or register)
+                boolean isInitialAuth = "/student".equals(servletPath)
+                        && (action == null || "login".equalsIgnoreCase(action) || "register".equalsIgnoreCase(action))
                         && session.getAttribute("currentStudent") == null;
 
-                if (!isInitialLogin) {
+                if (!isInitialAuth) {
                     // Extract CSRF token from request parameter or header
                     String requestToken = httpRequest.getParameter(CSRF_PARAM_NAME);
                     if (requestToken == null || requestToken.trim().isEmpty()) {

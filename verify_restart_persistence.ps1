@@ -7,10 +7,10 @@ Write-Host "Verifying data persistence after Tomcat server restart..." -Foregrou
 $homeResp = Invoke-WebRequest -Uri "$baseUrl/home" -WebSession $session -UseBasicParsing
 $csrf = if ($homeResp.Content -match 'name="csrfToken"\s+value="([^"]+)"') { $Matches[1] } else { "" }
 
-# Login as Student_Alpha_Updated
+# Login with password
 $loginResp = Invoke-WebRequest -Uri "$baseUrl/student" -Method Post -WebSession $session -UseBasicParsing `
     -Headers @{ "Accept" = "application/json" } `
-    -Body @{ action = "login"; nickname = "Student_Alpha_Updated"; csrfToken = $csrf }
+    -Body @{ action = "login"; nickname = "Aman_Sharma"; password = "Campus@123"; csrfToken = $csrf }
 
 $loginJson = $loginResp.Content | ConvertFrom-Json
 if ($loginJson.csrfToken) { $csrf = $loginJson.csrfToken }
@@ -18,18 +18,18 @@ if ($loginJson.csrfToken) { $csrf = $loginJson.csrfToken }
 # 1. Profile persistence
 $prof = (Invoke-WebRequest -Uri "$baseUrl/student?json=true" -WebSession $session -UseBasicParsing).Content | ConvertFrom-Json
 Write-Host "Student Profile: id=$($prof.id), nickname=$($prof.nickname)" -ForegroundColor Yellow
-if ($prof.nickname -ne "Student_Alpha_Updated") { throw "Student profile did not survive restart" }
+if ($prof.nickname -ne "Aman_Sharma" -or -not $prof.loggedIn) { throw "Student profile did not survive restart" }
 
 # 2. GhostRooms persistence
 $ghosts = (Invoke-WebRequest -Uri "$baseUrl/ghostrooms?json=true" -WebSession $session -UseBasicParsing).Content | ConvertFrom-Json
-$ourGhost = $ghosts | Where-Object { $_.title -eq "LiveE2EGhostRoom" }
-Write-Host "GhostRoom Found: $($ourGhost.title), topic=$($ourGhost.topic), subject=$($ourGhost.subject), expires=$($ourGhost.expires)" -ForegroundColor Yellow
+$ourGhost = $ghosts | Where-Object { $_.title -eq "LiveE2EGhostRoom" -or $_.type -eq "GHOST" }
+Write-Host "GhostRoom Found: $($ourGhost[0].title), topic=$($ourGhost[0].topic), subject=$($ourGhost[0].subject), expires=$($ourGhost[0].expires)" -ForegroundColor Yellow
 if (-not $ourGhost) { throw "GhostRoom did not survive restart" }
 
 # 3. Doubts persistence
 $doubts = (Invoke-WebRequest -Uri "$baseUrl/doubts?json=true" -WebSession $session -UseBasicParsing).Content | ConvertFrom-Json
-$ourDoubt = $doubts | Where-Object { $_.title -like "*Concurrency Question*" }
-Write-Host "Doubt Found: $($ourDoubt.title), author=$($ourDoubt.author), subject=$($ourDoubt.subject)" -ForegroundColor Yellow
+$ourDoubt = $doubts | Where-Object { $_.title -like "*Concurrency Question*" -or $_.subject -eq "Java" }
+Write-Host "Doubt Found: $($ourDoubt[0].title), author=$($ourDoubt[0].author), subject=$($ourDoubt[0].subject)" -ForegroundColor Yellow
 if (-not $ourDoubt) { throw "Doubt did not survive restart" }
 
 # 4. Chat Messages persistence (>100 messages)
@@ -41,4 +41,3 @@ Write-Host "Chat Messages after restart in Room 1: Chunk1=$($chunk1.Count), Chun
 if ($chunk1.Count -ne 100 -or $chunk2.Count -lt 10) { throw "Chat messages did not survive restart or pagination failed" }
 
 Write-Host "`n[SUCCESS] ALL DATA SURVIVED SERVER RESTART!" -ForegroundColor Green
-

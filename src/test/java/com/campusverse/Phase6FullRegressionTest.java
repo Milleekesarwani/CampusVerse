@@ -251,7 +251,9 @@ public class Phase6FullRegressionTest {
                 HttpServletRequest.class.getClassLoader(),
                 new Class<?>[]{HttpServletRequest.class},
                 (proxy, method, args) -> {
-                    if ("getSession".equals(method.getName())) return session;
+                    String name = method.getName();
+                    if ("isSecure".equals(name)) return false;
+                    if ("getSession".equals(name)) return session;
                     return null;
                 }
         );

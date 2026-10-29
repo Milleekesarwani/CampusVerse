@@ -187,8 +187,64 @@ public class DoubtServlet extends HttpServlet {
         String action = request.getParameter("action");
         if ("resolve".equalsIgnoreCase(action)) {
             handleResolve(request, response, current);
+        } else if ("answer".equalsIgnoreCase(action) || "reply".equalsIgnoreCase(action)) {
+            handleAnswer(request, response, current);
         } else {
             handleCreate(request, response, current);
+        }
+    }
+
+    private void handleAnswer(HttpServletRequest request, HttpServletResponse response, Student current)
+            throws IOException {
+        String accept = request.getHeader("Accept");
+        boolean isJson = "true".equalsIgnoreCase(request.getParameter("json")) || (accept != null && accept.contains("application/json"));
+
+        String doubtIdParam = request.getParameter("doubtId");
+        String answerText = request.getParameter("answerText");
+        if (answerText == null || answerText.trim().isEmpty()) {
+            answerText = request.getParameter("reply");
+        }
+        if (answerText == null || answerText.trim().isEmpty()) {
+            answerText = request.getParameter("content");
+        }
+
+        if (doubtIdParam == null || doubtIdParam.trim().isEmpty()) {
+            if (isJson) {
+                response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+                response.setContentType("application/json;charset=UTF-8");
+                response.getWriter().write("{\"error\":\"Missing doubtId\"}");
+                return;
+            }
+            response.sendError(HttpServletResponse.SC_BAD_REQUEST, "Missing doubtId");
+            return;
+        }
+
+        try {
+            Long doubtId = Long.parseLong(doubtIdParam.trim());
+            doubtService.postAnswer(doubtId, current.getId(), answerText);
+            if (isJson) {
+                response.setContentType("application/json;charset=UTF-8");
+                response.getWriter().write("{\"success\":true,\"doubtId\":" + doubtId + "}");
+                return;
+            }
+            response.sendRedirect(request.getContextPath() + "/doubts?id=" + doubtId + "&msg=Reply+added");
+        } catch (IllegalArgumentException e) {
+            if (isJson) {
+                response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+                response.setContentType("application/json;charset=UTF-8");
+                response.getWriter().write("{\"error\":\"" + SecurityUtils.escapeJson(e.getMessage()) + "\"}");
+                return;
+            }
+            response.sendError(HttpServletResponse.SC_BAD_REQUEST, e.getMessage());
+        } catch (SQLException e) {
+            LOGGER.log(Level.SEVERE, "Failed to submit doubt answer", e);
+            if (isJson) {
+                response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+                response.setContentType("application/json;charset=UTF-8");
+                response.getWriter().write("{\"error\":\"Database error\"}");
+                return;
+            }
+            response.sendError(HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "Database error");
         }
     }
 

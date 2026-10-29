@@ -1,0 +1,11 @@
+target/
+data/
+*.zip
+.git/
+.github/
+.idea/
+*.iml
+*.log
+temp_catalina_base/
+tools/
+

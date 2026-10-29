@@ -139,7 +139,8 @@ public class ChatServlet extends HttpServlet {
             if ((accept != null && accept.contains("application/json")) || "XMLHttpRequest".equalsIgnoreCase(xRequestedWith)) {
                 response.setContentType("application/json;charset=UTF-8");
                 response.getWriter().write(String.format(
-                        "{\"success\":true,\"messageId\":%d,\"sender\":\"%s\"}",
+                        "{\"success\":true,\"id\":%d,\"messageId\":%d,\"sender\":\"%s\"}",
+                        saved.getId(),
                         saved.getId(),
                         SecurityUtils.escapeJson(current.getNickname())
                 ));

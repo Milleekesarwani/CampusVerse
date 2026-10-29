@@ -11,14 +11,22 @@ import java.util.Objects;
 public class Student {
     private Long id;
     private String nickname;
+    private String passwordHash;
+    private String passwordSalt;
     private Timestamp createdAt;
     private List<Interest> interests = new ArrayList<>();
 
     public Student() {}
 
     public Student(Long id, String nickname, Timestamp createdAt) {
+        this(id, nickname, null, null, createdAt);
+    }
+
+    public Student(Long id, String nickname, String passwordHash, String passwordSalt, Timestamp createdAt) {
         this.id = id;
         this.nickname = nickname;
+        this.passwordHash = passwordHash;
+        this.passwordSalt = passwordSalt;
         this.createdAt = createdAt;
     }
 
@@ -36,6 +44,22 @@ public class Student {
 
     public void setNickname(String nickname) {
         this.nickname = nickname;
+    }
+
+    public String getPasswordHash() {
+        return passwordHash;
+    }
+
+    public void setPasswordHash(String passwordHash) {
+        this.passwordHash = passwordHash;
+    }
+
+    public String getPasswordSalt() {
+        return passwordSalt;
+    }
+
+    public void setPasswordSalt(String passwordSalt) {
+        this.passwordSalt = passwordSalt;
     }
 
     public Timestamp getCreatedAt() {

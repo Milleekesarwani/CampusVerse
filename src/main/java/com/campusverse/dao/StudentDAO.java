@@ -23,10 +23,15 @@ public class StudentDAO {
             return existing;
         }
 
-        String insertSql = "INSERT INTO students (nickname) VALUES (?)";
+        String salt = com.campusverse.util.PasswordUtils.generateSalt();
+        String hash = com.campusverse.util.PasswordUtils.hashPassword(com.campusverse.util.PasswordUtils.DEFAULT_DEMO_PASSWORD, salt);
+
+        String insertSql = "INSERT INTO students (nickname, password_hash, password_salt) VALUES (?, ?, ?)";
         try (Connection conn = DatabaseManager.getConnection();
              PreparedStatement stmt = conn.prepareStatement(insertSql, Statement.RETURN_GENERATED_KEYS)) {
             stmt.setString(1, nickname);
+            stmt.setString(2, hash);
+            stmt.setString(3, salt);
             stmt.executeUpdate();
 
             try (ResultSet rs = stmt.getGeneratedKeys()) {
@@ -39,9 +44,83 @@ public class StudentDAO {
         return findByNickname(nickname);
     }
 
+    public Student register(String rawNickname, String rawPassword) throws SQLException {
+        if (rawNickname == null || rawNickname.trim().isEmpty()) {
+            throw new IllegalArgumentException("Nickname cannot be blank");
+        }
+        String nickname = rawNickname.trim().replaceAll("\\s+", "_");
+        if (nickname.length() < 2 || nickname.length() > 50 || !nickname.matches("^[a-zA-Z0-9_.-]+$")) {
+            throw new IllegalArgumentException("Nickname must be 2-50 characters (letters, numbers, _.-)");
+        }
+        if (rawPassword == null || rawPassword.length() < 6) {
+            throw new IllegalArgumentException("Password must be at least 6 characters long");
+        }
+        if (rawPassword.length() > 100) {
+            throw new IllegalArgumentException("Password cannot exceed 100 characters");
+        }
+
+        Student existing = findByNickname(nickname);
+        if (existing != null) {
+            throw new IllegalArgumentException("Nickname already taken by another student");
+        }
+
+        String salt = com.campusverse.util.PasswordUtils.generateSalt();
+        String hash = com.campusverse.util.PasswordUtils.hashPassword(rawPassword, salt);
+
+        String insertSql = "INSERT INTO students (nickname, password_hash, password_salt) VALUES (?, ?, ?)";
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(insertSql, Statement.RETURN_GENERATED_KEYS)) {
+            stmt.setString(1, nickname);
+            stmt.setString(2, hash);
+            stmt.setString(3, salt);
+            stmt.executeUpdate();
+
+            try (ResultSet rs = stmt.getGeneratedKeys()) {
+                if (rs.next()) {
+                    return findById(rs.getLong(1));
+                }
+            }
+        }
+        return findByNickname(nickname);
+    }
+
+    public Student authenticate(String rawNickname, String rawPassword) throws SQLException {
+        if (rawNickname == null || rawNickname.trim().isEmpty() || rawPassword == null) {
+            return null;
+        }
+        String nickname = rawNickname.trim().replaceAll("\\s+", "_");
+        Student student = findByNickname(nickname);
+        if (student == null) {
+            return null;
+        }
+
+        if (student.getPasswordHash() == null || student.getPasswordHash().isEmpty()) {
+            if (com.campusverse.util.PasswordUtils.DEFAULT_DEMO_PASSWORD.equals(rawPassword) || rawPassword.length() >= 6) {
+                String salt = com.campusverse.util.PasswordUtils.generateSalt();
+                String hash = com.campusverse.util.PasswordUtils.hashPassword(rawPassword, salt);
+                try (Connection conn = DatabaseManager.getConnection();
+                     PreparedStatement stmt = conn.prepareStatement("UPDATE students SET password_hash = ?, password_salt = ? WHERE id = ?")) {
+                    stmt.setString(1, hash);
+                    stmt.setString(2, salt);
+                    stmt.setLong(3, student.getId());
+                    stmt.executeUpdate();
+                }
+                student.setPasswordHash(hash);
+                student.setPasswordSalt(salt);
+                return student;
+            }
+            return null;
+        }
+
+        if (com.campusverse.util.PasswordUtils.verifyPassword(rawPassword, student.getPasswordHash(), student.getPasswordSalt())) {
+            return student;
+        }
+        return null;
+    }
+
     public Student findById(Long id) throws SQLException {
         if (id == null) return null;
-        String sql = "SELECT id, nickname, created_at FROM students WHERE id = ?";
+        String sql = "SELECT id, nickname, password_hash, password_salt, created_at FROM students WHERE id = ?";
         try (Connection conn = DatabaseManager.getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
             stmt.setLong(1, id);
@@ -50,6 +129,8 @@ public class StudentDAO {
                     Student student = new Student(
                             rs.getLong("id"),
                             rs.getString("nickname"),
+                            rs.getString("password_hash"),
+                            rs.getString("password_salt"),
                             rs.getTimestamp("created_at")
                     );
                     student.setInterests(getStudentInterests(student.getId()));
@@ -62,7 +143,7 @@ public class StudentDAO {
 
     public Student findByNickname(String nickname) throws SQLException {
         if (nickname == null || nickname.trim().isEmpty()) return null;
-        String sql = "SELECT id, nickname, created_at FROM students WHERE LOWER(nickname) = LOWER(?)";
+        String sql = "SELECT id, nickname, password_hash, password_salt, created_at FROM students WHERE LOWER(nickname) = LOWER(?)";
         try (Connection conn = DatabaseManager.getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
             stmt.setString(1, nickname.trim());
@@ -71,6 +152,8 @@ public class StudentDAO {
                     Student student = new Student(
                             rs.getLong("id"),
                             rs.getString("nickname"),
+                            rs.getString("password_hash"),
+                            rs.getString("password_salt"),
                             rs.getTimestamp("created_at")
                     );
                     student.setInterests(getStudentInterests(student.getId()));

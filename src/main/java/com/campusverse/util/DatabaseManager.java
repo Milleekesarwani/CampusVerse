@@ -37,6 +37,10 @@ public class DatabaseManager {
         if (prop != null && !prop.trim().isEmpty()) {
             return prop.trim();
         }
+        String envUrl = System.getenv("CAMPUSVERSE_DB_URL");
+        if (envUrl != null && !envUrl.trim().isEmpty()) {
+            return envUrl.trim();
+        }
 
         if (resolvedDbUrl != null) {
             return resolvedDbUrl;
@@ -48,6 +52,9 @@ public class DatabaseManager {
             }
 
             String dataDirProp = System.getProperty("campusverse.data.dir");
+            if (dataDirProp == null || dataDirProp.trim().isEmpty()) {
+                dataDirProp = System.getenv("CAMPUSVERSE_DATA_DIR");
+            }
             File dataDir = null;
             if (dataDirProp != null && !dataDirProp.trim().isEmpty()) {
                 dataDir = new File(dataDirProp.trim());
@@ -100,14 +107,21 @@ public class DatabaseManager {
     public static synchronized void initSchema() {
         try (Connection conn = getConnection(); Statement stmt = conn.createStatement()) {
 
-            // 1. Students table
+            // 1. Students table with hashed password support
             stmt.execute("""
                 CREATE TABLE IF NOT EXISTS students (
                     id BIGINT AUTO_INCREMENT PRIMARY KEY,
                     nickname VARCHAR(50) NOT NULL UNIQUE,
+                    password_hash VARCHAR(255),
+                    password_salt VARCHAR(64),
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """);
+
+            try {
+                stmt.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255)");
+                stmt.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS password_salt VARCHAR(64)");
+            } catch (SQLException ignored) {}
 
             // 2. Interests table
             stmt.execute("""
@@ -262,8 +276,12 @@ public class DatabaseManager {
             {"Ananya_Das", "DBMS", "Python", "DSA"}
         };
 
-        String checkStu = "SELECT id FROM students WHERE nickname = ?";
-        String insStu = "INSERT INTO students (nickname) VALUES (?)";
+        String defaultSalt = PasswordUtils.generateSalt();
+        String defaultHash = PasswordUtils.hashPassword(PasswordUtils.DEFAULT_DEMO_PASSWORD, defaultSalt);
+
+        String checkStu = "SELECT id, password_hash FROM students WHERE nickname = ?";
+        String insStu = "INSERT INTO students (nickname, password_hash, password_salt) VALUES (?, ?, ?)";
+        String updPwd = "UPDATE students SET password_hash = ?, password_salt = ? WHERE id = ? AND (password_hash IS NULL OR password_hash = '')";
         String insInter = "MERGE INTO student_interests (student_id, interest_id) KEY(student_id, interest_id) " +
                           "SELECT ?, id FROM interests WHERE name = ?";
 
@@ -275,12 +293,23 @@ public class DatabaseManager {
                 try (ResultSet rs = cs.executeQuery()) {
                     if (rs.next()) {
                         stuId = rs.getLong(1);
+                        String currentHash = rs.getString(2);
+                        if (currentHash == null || currentHash.trim().isEmpty()) {
+                            try (PreparedStatement us = conn.prepareStatement(updPwd)) {
+                                us.setString(1, defaultHash);
+                                us.setString(2, defaultSalt);
+                                us.setLong(3, stuId);
+                                us.executeUpdate();
+                            }
+                        }
                     }
                 }
             }
             if (stuId == null) {
                 try (PreparedStatement is = conn.prepareStatement(insStu, Statement.RETURN_GENERATED_KEYS)) {
                     is.setString(1, nick);
+                    is.setString(2, defaultHash);
+                    is.setString(3, defaultSalt);
                     is.executeUpdate();
                     try (ResultSet rs = is.getGeneratedKeys()) {
                         if (rs.next()) stuId = rs.getLong(1);
@@ -387,6 +416,45 @@ public class DatabaseManager {
             ps.setString(1, name);
             ps.setTimestamp(2, expiresAt);
             ps.executeUpdate();
+        }
+    }
+
+    /**
+     * Executes an online, hot backup of the H2 database to a compressed ZIP archive.
+     */
+    public static void backupDatabase(File targetZipFile) throws SQLException {
+        if (targetZipFile == null) {
+            throw new IllegalArgumentException("Target backup file cannot be null");
+        }
+        File parent = targetZipFile.getParentFile();
+        if (parent != null && !parent.exists()) {
+            parent.mkdirs();
+        }
+        String normalizedPath = targetZipFile.getAbsolutePath().replace('\\', '/');
+        try (Connection conn = getConnection();
+             PreparedStatement stmt = conn.prepareStatement("BACKUP TO ?")) {
+            stmt.setString(1, normalizedPath);
+            stmt.executeUpdate();
+            LOGGER.info("CampusVerse H2 database successfully backed up to: " + normalizedPath);
+        }
+    }
+
+    /**
+     * CLI runner for backing up the database to a target zip archive.
+     */
+    public static void main(String[] args) {
+        String timestamp = new java.text.SimpleDateFormat("yyyyMMdd-HHmmss").format(new java.util.Date());
+        String targetPath = (args != null && args.length > 0)
+                ? String.join(" ", args)
+                : "data/backups/campusverse-backup-" + timestamp + ".zip";
+        File targetFile = new File(targetPath);
+        try {
+            backupDatabase(targetFile);
+            System.out.println("SUCCESS: Database backed up to " + targetFile.getAbsolutePath());
+        } catch (Exception e) {
+            System.err.println("ERROR: Backup failed: " + e.getMessage());
+            e.printStackTrace();
+            System.exit(1);
         }
     }
 }

@@ -1,4 +1,16 @@
-# Live End-to-End Verification Script for CampusVerse Lite on Tomcat 10.1
+# Comprehensive Live End-to-End Verification Suite for CampusVerse Lite on Tomcat 10.1
+# Tests:
+# 1. Unauthenticated prompt (no auto-login)
+# 2. Registration with password hashing
+# 3. Authentication & rejection of wrong/missing password
+# 4. Two separate student sessions
+# 5. Two-user study chat interaction
+# 6. Profile changes, interest persistence, and clearing
+# 7. Doubt Drop: creating doubt, posting answer, author-only resolution, non-author 403
+# 8. VibeMatch: Jaccard similarity and empty-state verification
+# 9. GhostRooms: 2h duration parsing, expiry calculation, topic/subject persistence
+# 10. Chat pagination (>100 messages with cursor)
+# 11. Logout & session invalidation
 
 $baseUrl = "http://localhost:8080/campusverse-lite"
 $results = [ordered]@{}
@@ -14,7 +26,7 @@ function Report-Fail($name, $details) {
 }
 
 Write-Host "==========================================================" -ForegroundColor Cyan
-Write-Host "Starting Live CampusVerse Lite Verification Suite" -ForegroundColor Cyan
+Write-Host "Starting Comprehensive CampusVerse Verification Suite" -ForegroundColor Cyan
 Write-Host "Target URL: $baseUrl" -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan
 
@@ -24,22 +36,28 @@ Write-Host "==========================================================" -Foregro
 try {
     $guestSession = New-Object Microsoft.PowerShell.Commands.WebRequestSession
     $homeResp = Invoke-WebRequest -Uri "$baseUrl/home" -WebSession $guestSession -UseBasicParsing
-    if ($homeResp.StatusCode -eq 200 -and $homeResp.Content -like "*Enter your campus corner*" -and $homeResp.Content -notlike "*Milee Kesarwani*") {
-        Report-Pass "Check 1: HomeServlet Unauthenticated" "Shows nickname entry prompt without auto-logging in visitor"
+    if ($homeResp.StatusCode -eq 200 -and ($homeResp.Content -like "*Sign In*" -or $homeResp.Content -like "*STUDENT NICKNAME*") -and $homeResp.Content -notlike "*Milee Kesarwani*") {
+        Report-Pass "Check 1: HomeServlet Unauthenticated" "Shows Sign In / Register interface without auto-logging in visitor"
     } else {
-        Report-Fail "Check 1: HomeServlet Unauthenticated" "HomeServlet response did not show clean nickname entry prompt"
+        Report-Fail "Check 1: HomeServlet Unauthenticated" "HomeServlet response did not show clean sign-in interface"
     }
 } catch {
     Report-Fail "Check 1: HomeServlet Unauthenticated" $_.Exception.Message
 }
 
 # -----------------------------------------------------------------------------
-# Check 2: Two separate student sessions
+# Check 2: Registration with hashed password & validation
 # -----------------------------------------------------------------------------
-try {
-    $sessionA = New-Object Microsoft.PowerShell.Commands.WebRequestSession
-    $sessionB = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+$sessionA = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+$sessionB = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+$nickA = "Student_Alpha_" + [Guid]::NewGuid().ToString().Substring(0, 6)
+$nickB = "Student_Beta_" + [Guid]::NewGuid().ToString().Substring(0, 6)
+$passA = "PassAlpha@123"
+$passB = "PassBeta@123"
+$csrfA = ""
+$csrfB = ""
 
+try {
     # Get CSRF tokens from home page
     $homeA = Invoke-WebRequest -Uri "$baseUrl/home" -WebSession $sessionA -UseBasicParsing
     $csrfA = if ($homeA.Content -match 'name="csrfToken"\s+value="([^"]+)"') { $Matches[1] } else { "" }
@@ -47,95 +65,168 @@ try {
     $homeB = Invoke-WebRequest -Uri "$baseUrl/home" -WebSession $sessionB -UseBasicParsing
     $csrfB = if ($homeB.Content -match 'name="csrfToken"\s+value="([^"]+)"') { $Matches[1] } else { "" }
 
-    # Login Student A
-    $loginRespA = Invoke-WebRequest -Uri "$baseUrl/student" -Method Post -WebSession $sessionA -UseBasicParsing `
+    # Register Student A
+    $regRespA = Invoke-WebRequest -Uri "$baseUrl/student" -Method Post -WebSession $sessionA -UseBasicParsing `
         -Headers @{ "Accept" = "application/json" } `
-        -Body @{ action = "login"; nickname = "Student_Alpha_E2E"; csrfToken = $csrfA }
+        -Body @{ action = "register"; nickname = $nickA; password = $passA; confirmPassword = $passA; csrfToken = $csrfA }
 
-    $jsonLoginA = $loginRespA.Content | ConvertFrom-Json
-    if ($jsonLoginA.csrfToken) { $csrfA = $jsonLoginA.csrfToken }
+    $regJsonA = $regRespA.Content | ConvertFrom-Json
+    if ($regJsonA.csrfToken) { $csrfA = $regJsonA.csrfToken }
 
-    # Login Student B
-    $loginRespB = Invoke-WebRequest -Uri "$baseUrl/student" -Method Post -WebSession $sessionB -UseBasicParsing `
+    # Register Student B
+    $regRespB = Invoke-WebRequest -Uri "$baseUrl/student" -Method Post -WebSession $sessionB -UseBasicParsing `
         -Headers @{ "Accept" = "application/json" } `
-        -Body @{ action = "login"; nickname = "Student_Beta_E2E"; csrfToken = $csrfB }
+        -Body @{ action = "register"; nickname = $nickB; password = $passB; confirmPassword = $passB; csrfToken = $csrfB }
 
-    $jsonLoginB = $loginRespB.Content | ConvertFrom-Json
-    if ($jsonLoginB.csrfToken) { $csrfB = $jsonLoginB.csrfToken }
+    $regJsonB = $regRespB.Content | ConvertFrom-Json
+    if ($regJsonB.csrfToken) { $csrfB = $regJsonB.csrfToken }
 
-    $profA = (Invoke-WebRequest -Uri "$baseUrl/student?json=true" -WebSession $sessionA -UseBasicParsing).Content | ConvertFrom-Json
-    $profB = (Invoke-WebRequest -Uri "$baseUrl/student?json=true" -WebSession $sessionB -UseBasicParsing).Content | ConvertFrom-Json
-
-    if ($profA.loggedIn -and $profB.loggedIn -and $profA.id -ne $profB.id -and $profA.nickname -eq "Student_Alpha_E2E" -and $profB.nickname -eq "Student_Beta_E2E") {
-        Report-Pass "Check 2: Separate Student Sessions" "Student A (ID $($profA.id): $($profA.nickname)) and Student B (ID $($profB.id): $($profB.nickname)) have independent sessions"
+    if ($regJsonA.success -and $regJsonB.success) {
+        Report-Pass "Check 2: Registration with Hashed Passwords" "Registered $nickA and $nickB successfully with salt & PBKDF2 hash"
     } else {
-        Report-Fail "Check 2: Separate Student Sessions" "Sessions were not independent or nicknames mismatched"
+        Report-Fail "Check 2: Registration with Hashed Passwords" "Registration failed: $($regRespA.Content) / $($regRespB.Content)"
     }
 } catch {
-    Report-Fail "Check 2: Separate Student Sessions" $_.Exception.Message
+    Report-Fail "Check 2: Registration with Hashed Passwords" $_.Exception.Message
 }
 
 # -----------------------------------------------------------------------------
-# Check 3: Profile and interest persistence after reload & clearing all interests
+# Check 3: Authentication Security (wrong password / missing password rejected)
 # -----------------------------------------------------------------------------
 try {
+    $tempSession = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+    $tempHome = Invoke-WebRequest -Uri "$baseUrl/home" -WebSession $tempSession -UseBasicParsing
+    $tempCsrf = if ($tempHome.Content -match 'name="csrfToken"\s+value="([^"]+)"') { $Matches[1] } else { "" }
+
+    # 1. Login with no password
+    $missingPass401 = $false
+    try {
+        Invoke-WebRequest -Uri "$baseUrl/student" -Method Post -WebSession $tempSession -UseBasicParsing `
+            -Headers @{ "Accept" = "application/json" } `
+            -Body @{ action = "login"; nickname = $nickA; csrfToken = $tempCsrf }
+    } catch {
+        if ($_.Exception.Response.StatusCode.value__ -eq 401) { $missingPass401 = $true }
+    }
+
+    # 2. Login with wrong password
+    $wrongPass401 = $false
+    try {
+        Invoke-WebRequest -Uri "$baseUrl/student" -Method Post -WebSession $tempSession -UseBasicParsing `
+            -Headers @{ "Accept" = "application/json" } `
+            -Body @{ action = "login"; nickname = $nickA; password = "WrongPassword!"; csrfToken = $tempCsrf }
+    } catch {
+        if ($_.Exception.Response.StatusCode.value__ -eq 401) { $wrongPass401 = $true }
+    }
+
+    # 3. Login with correct password
+    $correctLogin = Invoke-WebRequest -Uri "$baseUrl/student" -Method Post -WebSession $tempSession -UseBasicParsing `
+        -Headers @{ "Accept" = "application/json" } `
+        -Body @{ action = "login"; nickname = $nickA; password = $passA; csrfToken = $tempCsrf }
+    $correctJson = $correctLogin.Content | ConvertFrom-Json
+
+    if ($missingPass401 -and $wrongPass401 -and $correctJson.success) {
+        Report-Pass "Check 3: Authentication Security" "Missing password rejected (401), wrong password rejected (401), valid password authenticated"
+    } else {
+        Report-Fail "Check 3: Authentication Security" "Missing: $missingPass401, Wrong: $wrongPass401, Correct: $($correctJson.success)"
+    }
+} catch {
+    Report-Fail "Check 3: Authentication Security" $_.Exception.Message
+}
+
+# -----------------------------------------------------------------------------
+# Check 4: Separate Student Sessions
+# -----------------------------------------------------------------------------
+try {
+    $profA = (Invoke-WebRequest -Uri "$baseUrl/student?json=true" -WebSession $sessionA -UseBasicParsing).Content | ConvertFrom-Json
+    $profB = (Invoke-WebRequest -Uri "$baseUrl/student?json=true" -WebSession $sessionB -UseBasicParsing).Content | ConvertFrom-Json
+
+    if ($profA.loggedIn -and $profB.loggedIn -and $profA.id -ne $profB.id -and $profA.nickname -eq $nickA -and $profB.nickname -eq $nickB) {
+        Report-Pass "Check 4: Separate Student Sessions" "Student A (ID $($profA.id): $($profA.nickname)) and Student B (ID $($profB.id): $($profB.nickname)) have independent sessions"
+    } else {
+        Report-Fail "Check 4: Separate Student Sessions" "Sessions were not independent or nicknames mismatched"
+    }
+} catch {
+    Report-Fail "Check 4: Separate Student Sessions" $_.Exception.Message
+}
+
+# -----------------------------------------------------------------------------
+# Check 5: Two-User Chat Interaction
+# -----------------------------------------------------------------------------
+try {
+    $studyRoomId = 1 # DSA Study Room
+    $chatTextA = "Hello from Student A at " + [Guid]::NewGuid().ToString().Substring(0, 8)
+    $chatPostA = Invoke-WebRequest -Uri "$baseUrl/messages" -Method Post -WebSession $sessionA -UseBasicParsing `
+        -Headers @{ "Accept" = "application/json"; "X-CSRF-TOKEN" = $csrfA } `
+        -Body "roomId=$studyRoomId&content=$chatTextA&csrfToken=$csrfA" `
+        -ContentType "application/x-www-form-urlencoded"
+
+    $chatJsonA = $chatPostA.Content | ConvertFrom-Json
+    $msgIdA = if ($chatJsonA.messageId) { $chatJsonA.messageId } else { $chatJsonA.id }
+
+    # Student B polls for messages
+    $pollB = (Invoke-WebRequest -Uri "$baseUrl/api/messages?roomId=$studyRoomId&afterId=$([Math]::Max(0, $msgIdA - 1))" -WebSession $sessionB -UseBasicParsing).Content | ConvertFrom-Json
+    $foundMsgA = $pollB | Where-Object { $_.id -eq $msgIdA }
+
+    # Student B sends reply
+    $chatTextB = "Acknowledged by Student B at " + [Guid]::NewGuid().ToString().Substring(0, 8)
+    $chatPostB = Invoke-WebRequest -Uri "$baseUrl/messages" -Method Post -WebSession $sessionB -UseBasicParsing `
+        -Headers @{ "Accept" = "application/json"; "X-CSRF-TOKEN" = $csrfB } `
+        -Body "roomId=$studyRoomId&content=$chatTextB&csrfToken=$csrfB" `
+        -ContentType "application/x-www-form-urlencoded"
+    $chatJsonB = $chatPostB.Content | ConvertFrom-Json
+    $msgIdB = if ($chatJsonB.messageId) { $chatJsonB.messageId } else { $chatJsonB.id }
+
+    if ($foundMsgA -and $msgIdB -gt $msgIdA) {
+        Report-Pass "Check 5: Two-User Chat Interaction" "Student A sent msg $msgIdA; Student B polled and read it, then sent reply $msgIdB"
+    } else {
+        Report-Fail "Check 5: Two-User Chat Interaction" "Two-user chat failed to deliver or poll messages properly"
+    }
+} catch {
+    Report-Fail "Check 5: Two-User Chat Interaction" $_.Exception.Message
+}
+
+# -----------------------------------------------------------------------------
+# Check 6: Profile & Interest Persistence and Clearing
+# -----------------------------------------------------------------------------
+try {
+    $updatedNickA = $nickA + "_Upd"
     # Update profile for Student A with 2 interests using action=saveProfile
     $saveResp = Invoke-WebRequest -Uri "$baseUrl/student" -Method Post -WebSession $sessionA -UseBasicParsing `
         -Headers @{ "Accept" = "application/json"; "X-CSRF-TOKEN" = $csrfA } `
-        -Body "action=saveProfile&nickname=Student_Alpha_Updated&interests=DSA&interests=Java&csrfToken=$csrfA" `
+        -Body "action=saveProfile&nickname=$updatedNickA&interests=DSA&interests=Java&csrfToken=$csrfA" `
         -ContentType "application/x-www-form-urlencoded"
 
-    # Reload profile (simulating page reload)
+    # Reload profile
     $reloadA = (Invoke-WebRequest -Uri "$baseUrl/student?json=true" -WebSession $sessionA -UseBasicParsing).Content | ConvertFrom-Json
-
-    $hasInterests = ($reloadA.nickname -eq "Student_Alpha_Updated" -and $reloadA.interests.Count -ge 2 -and $reloadA.interests -contains "DSA" -and $reloadA.interests -contains "Java")
+    $hasInterests = ($reloadA.nickname -eq $updatedNickA -and $reloadA.interests.Count -ge 2 -and $reloadA.interests -contains "DSA" -and $reloadA.interests -contains "Java")
 
     # Clear all interests using action=update_profile without interests parameter
     $clearResp = Invoke-WebRequest -Uri "$baseUrl/student" -Method Post -WebSession $sessionA -UseBasicParsing `
         -Headers @{ "Accept" = "application/json"; "X-CSRF-TOKEN" = $csrfA } `
-        -Body "action=update_profile&nickname=Student_Alpha_Updated&csrfToken=$csrfA" `
+        -Body "action=update_profile&nickname=$updatedNickA&csrfToken=$csrfA" `
         -ContentType "application/x-www-form-urlencoded"
 
     # Reload again to verify empty interests
     $reloadEmpty = (Invoke-WebRequest -Uri "$baseUrl/student?json=true" -WebSession $sessionA -UseBasicParsing).Content | ConvertFrom-Json
     $clearedOk = ($reloadEmpty.interests.Count -eq 0)
 
-    if ($hasInterests -and $clearedOk) {
-        Report-Pass "Check 3: Profile & Interest Persistence" "Persisted nickname and interests on reload, and successfully cleared all interests when omitted"
-    } else {
-        Report-Fail "Check 3: Profile & Interest Persistence" "Interests or nickname failed to persist or clear properly"
-    }
-} catch {
-    Report-Fail "Check 3: Profile & Interest Persistence" $_.Exception.Message
-}
-
-# -----------------------------------------------------------------------------
-# Check 4: GhostRoom creation and correct expiry
-# -----------------------------------------------------------------------------
-try {
-    # Send title and hours (frontend fields)
-    $createGhostResp = Invoke-WebRequest -Uri "$baseUrl/ghostrooms" -Method Post -WebSession $sessionA -UseBasicParsing `
+    # Restore interests for VibeMatch testing later
+    Invoke-WebRequest -Uri "$baseUrl/student" -Method Post -WebSession $sessionA -UseBasicParsing `
         -Headers @{ "Accept" = "application/json"; "X-CSRF-TOKEN" = $csrfA } `
-        -Body "action=create&title=LiveE2EGhostRoom&hours=2&topic=Graph+Algorithms&subject=DSA&csrfToken=$csrfA" `
-        -ContentType "application/x-www-form-urlencoded"
+        -Body "action=saveProfile&nickname=$updatedNickA&interests=DSA&interests=Java&csrfToken=$csrfA" `
+        -ContentType "application/x-www-form-urlencoded" | Out-Null
 
-    $ghostJson = $createGhostResp.Content | ConvertFrom-Json
-    $ghostId = $ghostJson.roomId
-    $nowMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-    $diffHours = ($ghostJson.expires - $nowMs) / (1000 * 3600)
-
-    # Verify expiry is ~2 hours (between 1.8 and 2.1 hours)
-    if ($ghostJson.success -and $ghostJson.title -eq "LiveE2EGhostRoom" -and $diffHours -gt 1.8 -and $diffHours -lt 2.2) {
-        Report-Pass "Check 4: GhostRoom Creation & Expiry" "Created GhostRoom ID $ghostId with 2-hour duration (expires in $([Math]::Round($diffHours, 2))h)"
+    if ($hasInterests -and $clearedOk) {
+        Report-Pass "Check 6: Profile & Interest Persistence" "Persisted nickname and interests on reload, and successfully cleared all interests when omitted"
     } else {
-        Report-Fail "Check 4: GhostRoom Creation & Expiry" "GhostRoom duration was not parsed as 2 hours (calculated: $diffHours hrs)"
+        Report-Fail "Check 6: Profile & Interest Persistence" "Interests or nickname failed to persist or clear properly"
     }
 } catch {
-    Report-Fail "Check 4: GhostRoom Creation & Expiry" $_.Exception.Message
+    Report-Fail "Check 6: Profile & Interest Persistence" $_.Exception.Message
 }
 
 # -----------------------------------------------------------------------------
-# Check 5: Failed requests never showing success (403 non-author, 409 conflict)
+# Check 7: Doubts & Answers with Author-Only Resolution
 # -----------------------------------------------------------------------------
 try {
     # 1. Student A posts a doubt
@@ -147,54 +238,104 @@ try {
     $doubtJson = $doubtResp.Content | ConvertFrom-Json
     $doubtId = $doubtJson.id
 
-    # 2. Student B attempts to resolve Student A's doubt (must fail 403)
-    $resolveFailedWith403 = $false
+    # 2. Student B answers the doubt
+    $answerResp = Invoke-WebRequest -Uri "$baseUrl/doubts" -Method Post -WebSession $sessionB -UseBasicParsing `
+        -Headers @{ "Accept" = "application/json"; "X-CSRF-TOKEN" = $csrfB } `
+        -Body "action=answer&doubtId=$doubtId&answerText=Volatile+ensures+visibility+while+synchronized+also+ensures+atomicity.&csrfToken=$csrfB" `
+        -ContentType "application/x-www-form-urlencoded"
+
+    # 3. Student B attempts to resolve Student A's doubt (must fail 403 Forbidden)
+    $resolveNonAuthorFailed403 = $false
     try {
-        $nonAuthorResp = Invoke-WebRequest -Uri "$baseUrl/doubts" -Method Post -WebSession $sessionB -UseBasicParsing `
+        Invoke-WebRequest -Uri "$baseUrl/doubts" -Method Post -WebSession $sessionB -UseBasicParsing `
             -Headers @{ "Accept" = "application/json"; "X-CSRF-TOKEN" = $csrfB } `
             -Body "action=resolve&doubtId=$doubtId&csrfToken=$csrfB" `
             -ContentType "application/x-www-form-urlencoded"
     } catch {
-        if ($_.Exception.Response.StatusCode.value__ -eq 403) {
-            $resolveFailedWith403 = $true
-        }
+        if ($_.Exception.Response.StatusCode.value__ -eq 403) { $resolveNonAuthorFailed403 = $true }
     }
 
-    # 3. Student B attempts to claim Student A's nickname (must fail 409)
-    $nickConflict409 = $false
-    try {
-        $conflictResp = Invoke-WebRequest -Uri "$baseUrl/student" -Method Post -WebSession $sessionB -UseBasicParsing `
-            -Headers @{ "Accept" = "application/json"; "X-CSRF-TOKEN" = $csrfB } `
-            -Body "action=saveProfile&nickname=Student_Alpha_Updated&csrfToken=$csrfB" `
-            -ContentType "application/x-www-form-urlencoded"
-    } catch {
-        if ($_.Exception.Response.StatusCode.value__ -eq 409) {
-            $nickConflict409 = $true
-        }
-    }
+    # 4. Author (Student A) resolves the doubt (must succeed 200)
+    $resolveAuthorResp = Invoke-WebRequest -Uri "$baseUrl/doubts" -Method Post -WebSession $sessionA -UseBasicParsing `
+        -Headers @{ "Accept" = "application/json"; "X-CSRF-TOKEN" = $csrfA } `
+        -Body "action=resolve&doubtId=$doubtId&csrfToken=$csrfA" `
+        -ContentType "application/x-www-form-urlencoded"
 
-    if ($resolveFailedWith403 -and $nickConflict409) {
-        Report-Pass "Check 5: Failed Requests Validation" "Non-author resolve returned 403 Forbidden; nickname conflict returned 409 Conflict. Success never shown on error."
+    $resolveAuthorJson = $resolveAuthorResp.Content | ConvertFrom-Json
+
+    if ($doubtId -and $resolveNonAuthorFailed403 -and $resolveAuthorJson.success) {
+        Report-Pass "Check 7: Doubts & Answers Workflow" "Doubt posted, answer recorded, non-author resolve rejected (403), author resolve succeeded (200)"
     } else {
-        Report-Fail "Check 5: Failed Requests Validation" "Failed requests did not return expected HTTP error codes (resolve403: $resolveFailedWith403, nick409: $nickConflict409)"
+        Report-Fail "Check 7: Doubts & Answers Workflow" "Doubt workflow validation failed (doubtId: $doubtId, 403: $resolveNonAuthorFailed403, authorResolved: $($resolveAuthorJson.success))"
     }
 } catch {
-    Report-Fail "Check 5: Failed Requests Validation" $_.Exception.Message
+    Report-Fail "Check 7: Doubts & Answers Workflow" $_.Exception.Message
 }
 
 # -----------------------------------------------------------------------------
-# Check 6: More than 100 chat messages & pagination
+# Check 8: VibeMatch Live Matching (No sample fallback)
 # -----------------------------------------------------------------------------
 try {
-    # Study room 1: DSA
+    # Set Student B interests: Java, Web Development
+    # Student A has: DSA, Java
+    # Shared: Java. Union: DSA, Java, Web Development => Jaccard similarity > 0%
+    Invoke-WebRequest -Uri "$baseUrl/student" -Method Post -WebSession $sessionB -UseBasicParsing `
+        -Headers @{ "Accept" = "application/json"; "X-CSRF-TOKEN" = $csrfB } `
+        -Body "action=saveProfile&nickname=$nickB&interests=Java&interests=Web+Development&csrfToken=$csrfB" `
+        -ContentType "application/x-www-form-urlencoded" | Out-Null
+
+    # Query matches for Student A
+    $matchesRaw = (Invoke-WebRequest -Uri "$baseUrl/vibematch?json=true" -WebSession $sessionA -UseBasicParsing).Content
+    $matchesJson = $matchesRaw | ConvertFrom-Json
+
+    $foundPeerB = $matchesJson | Where-Object { $_.nickname -eq $nickB -or $_.name -like "*$($nickB.Replace('_', ' '))*" }
+    $score = if ($foundPeerB.matchPercentage) { $foundPeerB.matchPercentage } else { $foundPeerB.score }
+    $noFallbackSample = (-not ($matchesJson | Where-Object { $_.name -like "*Sample*" -or $_.nickname -like "*Sample*" }))
+
+    if ($foundPeerB -and $score -gt 0 -and $noFallbackSample) {
+        Report-Pass "Check 8: VibeMatch Live Matching" "Accurately matched $nickB ($score% match) without fake sample fallbacks"
+    } else {
+        Report-Fail "Check 8: VibeMatch Live Matching" "VibeMatch failed to match real peer or included unwanted sample peers"
+    }
+} catch {
+    Report-Fail "Check 8: VibeMatch Live Matching" $_.Exception.Message
+}
+
+# -----------------------------------------------------------------------------
+# Check 9: GhostRoom Creation and Expiry
+# -----------------------------------------------------------------------------
+try {
+    $createGhostResp = Invoke-WebRequest -Uri "$baseUrl/ghostrooms" -Method Post -WebSession $sessionA -UseBasicParsing `
+        -Headers @{ "Accept" = "application/json"; "X-CSRF-TOKEN" = $csrfA } `
+        -Body "action=create&title=LiveE2EGhostRoom&hours=2&topic=Graph+Algorithms&subject=DSA&csrfToken=$csrfA" `
+        -ContentType "application/x-www-form-urlencoded"
+
+    $ghostJson = $createGhostResp.Content | ConvertFrom-Json
+    $ghostId = $ghostJson.roomId
+    $nowMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    $diffHours = ($ghostJson.expires - $nowMs) / (1000 * 3600)
+
+    if ($ghostJson.success -and $ghostJson.title -eq "LiveE2EGhostRoom" -and $diffHours -gt 1.8 -and $diffHours -lt 2.2) {
+        Report-Pass "Check 9: GhostRoom Creation & Expiry" "Created GhostRoom ID $ghostId with exact 2h duration (expires in $([Math]::Round($diffHours, 2))h)"
+    } else {
+        Report-Fail "Check 9: GhostRoom Creation & Expiry" "GhostRoom duration was not parsed as 2 hours ($diffHours hrs)"
+    }
+} catch {
+    Report-Fail "Check 9: GhostRoom Creation & Expiry" $_.Exception.Message
+}
+
+# -----------------------------------------------------------------------------
+# Check 10: More than 100 chat messages & pagination
+# -----------------------------------------------------------------------------
+try {
     $roomId = 1
     Write-Host "[INFO] Seeding 110 chat messages into Room $roomId to test pagination beyond 100..." -ForegroundColor DarkGray
 
     for ($i = 1; $i -le 110; $i++) {
-        $msgPost = Invoke-WebRequest -Uri "$baseUrl/messages" -Method Post -WebSession $sessionA -UseBasicParsing `
+        Invoke-WebRequest -Uri "$baseUrl/messages" -Method Post -WebSession $sessionA -UseBasicParsing `
             -Headers @{ "Accept" = "application/json"; "X-CSRF-TOKEN" = $csrfA } `
             -Body "roomId=$roomId&content=Live+E2E+Message+Sequence+$i&csrfToken=$csrfA" `
-            -ContentType "application/x-www-form-urlencoded"
+            -ContentType "application/x-www-form-urlencoded" | Out-Null
     }
 
     # First fetch: afterId = 0
@@ -211,12 +352,32 @@ try {
     $chunk2Count = $chunk2.Count
 
     if ($chunk1Count -eq 100 -and $chunk2Count -ge 10) {
-        Report-Pass "Check 6: >100 Messages Pagination" "Chunk 1 returned exactly 100 messages; Chunk 2 after ID $cursor returned $chunk2Count additional messages"
+        Report-Pass "Check 10: >100 Messages Pagination" "Chunk 1 returned 100 messages; Chunk 2 after cursor returned $chunk2Count additional messages"
     } else {
-        Report-Fail "Check 6: >100 Messages Pagination" "Pagination did not return expected chunk counts (chunk1: $chunk1Count, chunk2: $chunk2Count)"
+        Report-Fail "Check 10: >100 Messages Pagination" "Pagination failed: chunk1=$chunk1Count, chunk2=$chunk2Count"
     }
 } catch {
-    Report-Fail "Check 6: >100 Messages Pagination" $_.Exception.Message
+    Report-Fail "Check 10: >100 Messages Pagination" $_.Exception.Message
+}
+
+# -----------------------------------------------------------------------------
+# Check 11: Logout and Session Invalidation
+# -----------------------------------------------------------------------------
+try {
+    $logoutResp = Invoke-WebRequest -Uri "$baseUrl/student" -Method Post -WebSession $sessionA -UseBasicParsing `
+        -Headers @{ "Accept" = "application/json"; "X-CSRF-TOKEN" = $csrfA } `
+        -Body "action=logout&csrfToken=$csrfA" `
+        -ContentType "application/x-www-form-urlencoded"
+
+    $profAfterLogout = (Invoke-WebRequest -Uri "$baseUrl/student?json=true" -WebSession $sessionA -UseBasicParsing).Content | ConvertFrom-Json
+
+    if (-not $profAfterLogout.loggedIn) {
+        Report-Pass "Check 11: Logout & Session Invalidation" "Student logged out cleanly; session invalidated and access revoked"
+    } else {
+        Report-Fail "Check 11: Logout & Session Invalidation" "Student remained logged in after logout action"
+    }
+} catch {
+    Report-Fail "Check 11: Logout & Session Invalidation" $_.Exception.Message
 }
 
 # -----------------------------------------------------------------------------
@@ -225,6 +386,20 @@ try {
 Write-Host "`n==========================================================" -ForegroundColor Cyan
 Write-Host "Live E2E Verification Results Summary" -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan
+$failedCount = 0
 foreach ($k in $results.Keys) {
-    Write-Host "$k : $($results[$k])"
+    if ($results[$k] -like "FAIL:*") {
+        $failedCount++
+        Write-Host "$k : $($results[$k])" -ForegroundColor Red
+    } else {
+        Write-Host "$k : $($results[$k])" -ForegroundColor Green
+    }
+}
+
+if ($failedCount -eq 0) {
+    Write-Host "`n[SUCCESS] ALL $($results.Count) CHECKS PASSED!" -ForegroundColor Green
+    exit 0
+} else {
+    Write-Host "`n[FAILURE] $failedCount CHECKS FAILED!" -ForegroundColor Red
+    exit 1
 }

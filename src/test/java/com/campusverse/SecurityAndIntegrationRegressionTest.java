@@ -329,6 +329,7 @@ public class SecurityAndIntegrationRegressionTest {
                 new Class<?>[]{HttpServletRequest.class},
                 (proxy, m, args) -> {
                     String name = m.getName();
+                    if ("isSecure".equals(name)) return false;
                     if ("getMethod".equals(name)) return method;
                     if ("getServletPath".equals(name)) return servletPath;
                     if ("getHeader".equals(name)) return headers.get(args[0]);

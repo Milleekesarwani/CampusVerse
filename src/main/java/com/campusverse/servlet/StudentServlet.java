@@ -86,6 +86,10 @@ public class StudentServlet extends HttpServlet {
         }
     }
 
+    private static final int MAX_FAILED_ATTEMPTS = 5;
+    private static final long LOCKOUT_DURATION_MS = 5 * 60 * 1000L; // 5 minutes
+    private static final java.util.concurrent.ConcurrentHashMap<String, java.util.List<Long>> FAILED_LOGIN_ATTEMPTS = new java.util.concurrent.ConcurrentHashMap<>();
+
     @Override
     protected void doPost(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
@@ -94,14 +98,17 @@ public class StudentServlet extends HttpServlet {
             action = "login";
         }
 
-        switch (action) {
+        switch (action.toLowerCase()) {
+            case "register":
+                handleRegister(request, response);
+                break;
             case "login":
                 handleLogin(request, response);
                 break;
-            case "updateInterests":
+            case "updateinterests":
                 handleUpdateInterests(request, response);
                 break;
-            case "saveProfile":
+            case "saveprofile":
             case "update_profile":
                 handleSaveProfile(request, response);
                 break;
@@ -113,51 +120,150 @@ public class StudentServlet extends HttpServlet {
         }
     }
 
-    private void handleLogin(HttpServletRequest request, HttpServletResponse response)
+    private void handleRegister(HttpServletRequest request, HttpServletResponse response)
             throws IOException {
         String nickname = request.getParameter("nickname");
+        String password = request.getParameter("password");
+        String confirmPassword = request.getParameter("confirmPassword");
+
+        String accept = request.getHeader("Accept");
+        boolean isJson = "true".equalsIgnoreCase(request.getParameter("json")) || (accept != null && accept.contains("application/json"));
+
         if (nickname == null || nickname.trim().isEmpty()) {
-            response.sendRedirect(request.getContextPath() + "/home?error=Nickname+cannot+be+blank");
+            sendAuthError(request, response, HttpServletResponse.SC_BAD_REQUEST, "Nickname cannot be blank", isJson);
+            return;
+        }
+        if (password == null || password.trim().isEmpty()) {
+            sendAuthError(request, response, HttpServletResponse.SC_BAD_REQUEST, "Password cannot be blank", isJson);
+            return;
+        }
+        if (password.length() < 6) {
+            sendAuthError(request, response, HttpServletResponse.SC_BAD_REQUEST, "Password must be at least 6 characters", isJson);
+            return;
+        }
+        if (confirmPassword != null && !confirmPassword.trim().isEmpty() && !confirmPassword.equals(password)) {
+            sendAuthError(request, response, HttpServletResponse.SC_BAD_REQUEST, "Passwords do not match", isJson);
             return;
         }
 
         try {
-            Student student = studentDAO.findOrCreateByNickname(nickname);
+            Student student = studentDAO.register(nickname, password);
+            establishSession(request, response, student, isJson, "Registration successful. Welcome to CampusVerse!");
+        } catch (IllegalArgumentException e) {
+            sendAuthError(request, response, HttpServletResponse.SC_BAD_REQUEST, e.getMessage(), isJson);
+        } catch (SQLException e) {
+            LOGGER.log(Level.SEVERE, "Database error during student registration", e);
+            sendAuthError(request, response, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "Database error occurred", isJson);
+        }
+    }
 
-            // Rotate session ID to protect against session fixation attacks
-            HttpSession oldSession = request.getSession(false);
-            if (oldSession != null) {
-                try {
-                    request.changeSessionId();
-                } catch (Throwable t) {
-                    oldSession.invalidate();
+    private void handleLogin(HttpServletRequest request, HttpServletResponse response)
+            throws IOException {
+        String nickname = request.getParameter("nickname");
+        String password = request.getParameter("password");
+
+        String accept = request.getHeader("Accept");
+        boolean isJson = "true".equalsIgnoreCase(request.getParameter("json")) || (accept != null && accept.contains("application/json"));
+
+        if (nickname == null || nickname.trim().isEmpty()) {
+            sendAuthError(request, response, HttpServletResponse.SC_BAD_REQUEST, "Nickname cannot be blank", isJson);
+            return;
+        }
+
+        String clientIp = getClientIp(request);
+        if (isRateLimited(clientIp)) {
+            sendAuthError(request, response, 429, "Too many failed attempts. Please try again in 5 minutes.", isJson);
+            return;
+        }
+
+        try {
+            if (password == null || password.trim().isEmpty()) {
+                Student existing = studentDAO.findByNickname(nickname.trim().replaceAll("\\s+", "_"));
+                if (existing != null) {
+                    sendAuthError(request, response, HttpServletResponse.SC_UNAUTHORIZED, "Password is required to access this account", isJson);
+                } else {
+                    sendAuthError(request, response, HttpServletResponse.SC_UNAUTHORIZED, "Account does not exist. Please register first.", isJson);
                 }
-            }
-            HttpSession session = request.getSession(true);
-            session.setAttribute("currentStudent", student);
-            session.setAttribute("studentId", student.getId());
-            session.setAttribute("nickname", student.getNickname());
-
-            // Generate fresh CSRF token upon authentication
-            String newCsrf = UUID.randomUUID().toString();
-            session.setAttribute(SecurityFilter.CSRF_TOKEN_ATTR, newCsrf);
-
-            String accept = request.getHeader("Accept");
-            boolean isJson = "true".equalsIgnoreCase(request.getParameter("json")) || (accept != null && accept.contains("application/json"));
-            if (isJson) {
-                response.setContentType("application/json;charset=UTF-8");
-                response.getWriter().write(String.format("{\"success\":true,\"nickname\":\"%s\",\"csrfToken\":\"%s\"}",
-                        SecurityUtils.escapeJson(student.getNickname()), newCsrf));
                 return;
             }
 
-            response.sendRedirect(request.getContextPath() + "/home");
-        } catch (IllegalArgumentException e) {
-            response.sendRedirect(request.getContextPath() + "/home?error=" + urlEncode(e.getMessage()));
+            Student student = studentDAO.authenticate(nickname, password);
+            if (student == null) {
+                recordFailedAttempt(clientIp);
+                sendAuthError(request, response, HttpServletResponse.SC_UNAUTHORIZED, "Invalid nickname or password", isJson);
+                return;
+            }
+
+            clearFailedAttempts(clientIp);
+            establishSession(request, response, student, isJson, "Welcome back, " + student.getNickname() + "!");
         } catch (SQLException e) {
             LOGGER.log(Level.SEVERE, "Database error during student login", e);
-            response.sendRedirect(request.getContextPath() + "/home?error=Database+error+occurred");
+            sendAuthError(request, response, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "Database error occurred", isJson);
         }
+    }
+
+    private void establishSession(HttpServletRequest request, HttpServletResponse response, Student student, boolean isJson, String message)
+            throws IOException {
+        HttpSession oldSession = request.getSession(false);
+        if (oldSession != null) {
+            try {
+                request.changeSessionId();
+            } catch (Throwable t) {
+                oldSession.invalidate();
+            }
+        }
+        HttpSession session = request.getSession(true);
+        session.setAttribute("currentStudent", student);
+        session.setAttribute("studentId", student.getId());
+        session.setAttribute("nickname", student.getNickname());
+
+        String newCsrf = UUID.randomUUID().toString();
+        session.setAttribute(SecurityFilter.CSRF_TOKEN_ATTR, newCsrf);
+
+        if (isJson) {
+            response.setContentType("application/json;charset=UTF-8");
+            response.getWriter().write(String.format("{\"success\":true,\"nickname\":\"%s\",\"csrfToken\":\"%s\"}",
+                    SecurityUtils.escapeJson(student.getNickname()), newCsrf));
+            return;
+        }
+
+        response.sendRedirect(request.getContextPath() + "/home?msg=" + urlEncode(message));
+    }
+
+    private void sendAuthError(HttpServletRequest request, HttpServletResponse response, int statusCode, String message, boolean isJson)
+            throws IOException {
+        if (isJson) {
+            response.setStatus(statusCode);
+            response.setContentType("application/json;charset=UTF-8");
+            response.getWriter().write("{\"error\":\"" + SecurityUtils.escapeJson(message) + "\"}");
+        } else {
+            response.sendRedirect(request.getContextPath() + "/home?error=" + urlEncode(message));
+        }
+    }
+
+    private static String getClientIp(HttpServletRequest req) {
+        String xff = req.getHeader("X-Forwarded-For");
+        if (xff != null && !xff.trim().isEmpty()) {
+            return xff.split(",")[0].trim();
+        }
+        return req.getRemoteAddr() != null ? req.getRemoteAddr() : "unknown";
+    }
+
+    private static synchronized boolean isRateLimited(String ip) {
+        java.util.List<Long> attempts = FAILED_LOGIN_ATTEMPTS.get(ip);
+        if (attempts == null || attempts.isEmpty()) return false;
+        long now = System.currentTimeMillis();
+        attempts.removeIf(ts -> now - ts > LOCKOUT_DURATION_MS);
+        return attempts.size() >= MAX_FAILED_ATTEMPTS;
+    }
+
+    private static synchronized void recordFailedAttempt(String ip) {
+        long now = System.currentTimeMillis();
+        FAILED_LOGIN_ATTEMPTS.computeIfAbsent(ip, k -> new java.util.concurrent.CopyOnWriteArrayList<>()).add(now);
+    }
+
+    private static void clearFailedAttempts(String ip) {
+        FAILED_LOGIN_ATTEMPTS.remove(ip);
     }
 
     private void handleUpdateInterests(HttpServletRequest request, HttpServletResponse response)

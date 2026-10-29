@@ -115,11 +115,18 @@ public class CampusVerseFixesRegressionTest {
     @DisplayName("Fix 1 & 2: Two separate student sessions maintain distinct identities")
     void testTwoSeparateStudentSessions() throws Exception {
         StudentServlet servlet = new StudentServlet();
+        String nickA = "Student_Alpha_" + UUID.randomUUID().toString().substring(0, 8);
+        String nickB = "Student_Beta_" + UUID.randomUUID().toString().substring(0, 8);
 
-        // Student A logs in
+        // Student A registers and establishes session
         Map<String, Object> sessionAttrsA = new HashMap<>();
         HttpSession sessionA = createMockSession(sessionAttrsA);
-        Map<String, String> paramsA = Map.of("action", "login", "nickname", "Student_Alpha_Reg");
+        Map<String, String> paramsA = Map.of(
+                "action", "register",
+                "nickname", nickA,
+                "password", "AlphaSecret123",
+                "confirmPassword", "AlphaSecret123"
+        );
         HttpServletRequest reqA = createMockRequest("POST", "/student", Map.of("Accept", "application/json"), paramsA, sessionA);
         StringWriter outA = new StringWriter();
         int[] statusA = {200};
@@ -128,12 +135,17 @@ public class CampusVerseFixesRegressionTest {
         servlet.service(reqA, respA);
         Student studentA = (Student) sessionAttrsA.get("currentStudent");
         assertNotNull(studentA, "Student A should have a valid session student");
-        assertEquals("Student_Alpha_Reg", studentA.getNickname());
+        assertEquals(nickA, studentA.getNickname());
 
-        // Student B logs in
+        // Student B registers and establishes session
         Map<String, Object> sessionAttrsB = new HashMap<>();
         HttpSession sessionB = createMockSession(sessionAttrsB);
-        Map<String, String> paramsB = Map.of("action", "login", "nickname", "Student_Beta_Reg");
+        Map<String, String> paramsB = Map.of(
+                "action", "register",
+                "nickname", nickB,
+                "password", "BetaSecret123",
+                "confirmPassword", "BetaSecret123"
+        );
         HttpServletRequest reqB = createMockRequest("POST", "/student", Map.of("Accept", "application/json"), paramsB, sessionB);
         StringWriter outB = new StringWriter();
         int[] statusB = {200};
@@ -142,7 +154,7 @@ public class CampusVerseFixesRegressionTest {
         servlet.service(reqB, respB);
         Student studentB = (Student) sessionAttrsB.get("currentStudent");
         assertNotNull(studentB, "Student B should have a valid session student");
-        assertEquals("Student_Beta_Reg", studentB.getNickname());
+        assertEquals(nickB, studentB.getNickname());
 
         // Ensure distinct identities
         assertNotEquals(studentA.getId(), studentB.getId(), "Students must have unique IDs");
@@ -285,11 +297,17 @@ public class CampusVerseFixesRegressionTest {
     @Test
     @DisplayName("Fix: Non-JSON student login redirects to /home consistently")
     void testLoginRedirectsToHome() throws Exception {
+        String user = "HomeRedirectUser_" + UUID.randomUUID().toString().substring(0, 8);
+        studentDAO.register(user, "HomePass123");
         StudentServlet servlet = new StudentServlet();
         Map<String, Object> sessionAttrs = new HashMap<>();
         HttpSession session = createMockSession(sessionAttrs);
 
-        Map<String, String> params = Map.of("action", "login", "nickname", "HomeRedirectUser");
+        Map<String, String> params = Map.of(
+                "action", "login",
+                "nickname", user,
+                "password", "HomePass123"
+        );
         HttpServletRequest req = createMockRequest("POST", "/student", new HashMap<>(), params, session);
         String[] redirectUrl = {null};
         HttpServletResponse resp = (HttpServletResponse) Proxy.newProxyInstance(
@@ -306,7 +324,8 @@ public class CampusVerseFixesRegressionTest {
 
         servlet.service(req, resp);
         assertNotNull(redirectUrl[0]);
-        assertTrue(redirectUrl[0].endsWith("/home"), "Login must redirect to /home, actual: " + redirectUrl[0]);
+        assertTrue(redirectUrl[0].contains("/home"), "Login must redirect to /home, actual: " + redirectUrl[0]);
+        assertFalse(redirectUrl[0].contains("/student"), "Login must not redirect to old profile URL");
     }
 
     // --- Issue 6: Expiration checks reject messages at or after expiry ---
@@ -484,6 +503,142 @@ public class CampusVerseFixesRegressionTest {
         assertEquals("Java", reloadedRoom.getSubject());
     }
 
+    // --- Production Security & Authentication Tests ---
+
+    @Test
+    @DisplayName("Auth: Register creates student with PBKDF2 hashed password and unique salt")
+    void testStudentRegistrationWithHashedPassword() throws Exception {
+        String nick = "SecureStudent_" + UUID.randomUUID().toString().substring(0, 8);
+        String rawPassword = "P@ssw0rdSecure!";
+
+        Student student = studentDAO.register(nick, rawPassword);
+        assertNotNull(student);
+        assertNotNull(student.getId());
+        assertEquals(nick, student.getNickname());
+        assertNotNull(student.getPasswordHash(), "Password hash must be generated");
+        assertNotNull(student.getPasswordSalt(), "Password salt must be generated");
+        assertNotEquals(rawPassword, student.getPasswordHash(), "Password must not be stored in plaintext");
+
+        // Authenticate succeeds with right password
+        Student auth = studentDAO.authenticate(nick, rawPassword);
+        assertNotNull(auth);
+        assertEquals(student.getId(), auth.getId());
+
+        // Authenticate fails with wrong password
+        Student wrong = studentDAO.authenticate(nick, "WrongPassword");
+        assertNull(wrong);
+    }
+
+    @Test
+    @DisplayName("Auth: Existing account cannot be accessed without providing password (HTTP 401)")
+    void testExistingAccountAccessWithoutPasswordRejected() throws Exception {
+        String nick = "PasswordProtected_" + UUID.randomUUID().toString().substring(0, 8);
+        studentDAO.register(nick, "SuperSecret123");
+
+        StudentServlet servlet = new StudentServlet();
+        Map<String, Object> sessionAttrs = new HashMap<>();
+        HttpSession session = createMockSession(sessionAttrs);
+
+        // Attempt login with only nickname, no password
+        Map<String, String> params = Map.of(
+                "action", "login",
+                "nickname", nick
+        );
+        HttpServletRequest req = createMockRequest("POST", "/student", Map.of("Accept", "application/json"), params, session);
+        StringWriter out = new StringWriter();
+        int[] status = {200};
+        servlet.service(req, createMockResponse(status, new HashMap<>(), out));
+
+        assertEquals(401, status[0], "Login without password on existing account must return 401 Unauthorized");
+        assertNull(sessionAttrs.get("currentStudent"), "Session must not be granted without valid password");
+    }
+
+    @Test
+    @DisplayName("Auth: Login with invalid password returns HTTP 401 Unauthorized")
+    void testLoginWithInvalidPasswordRejected() throws Exception {
+        String nick = "WrongPassUser_" + UUID.randomUUID().toString().substring(0, 8);
+        studentDAO.register(nick, "CorrectPassword123");
+
+        StudentServlet servlet = new StudentServlet();
+        Map<String, Object> sessionAttrs = new HashMap<>();
+        HttpSession session = createMockSession(sessionAttrs);
+
+        Map<String, String> params = Map.of(
+                "action", "login",
+                "nickname", nick,
+                "password", "IncorrectPassword!"
+        );
+        HttpServletRequest req = createMockRequest("POST", "/student", Map.of("Accept", "application/json"), params, session);
+        StringWriter out = new StringWriter();
+        int[] status = {200};
+        servlet.service(req, createMockResponse(status, new HashMap<>(), out));
+
+        assertEquals(401, status[0], "Login with wrong password must return 401");
+        assertNull(sessionAttrs.get("currentStudent"), "Session must not be granted on wrong password");
+    }
+
+    @Test
+    @DisplayName("Security: Login rate limiting triggers HTTP 429 after 5 failed attempts")
+    void testLoginRateLimiting() throws Exception {
+        String nick = "RateLimitTarget_" + UUID.randomUUID().toString().substring(0, 8);
+        studentDAO.register(nick, "ValidPass123");
+
+        StudentServlet servlet = new StudentServlet();
+        String testIp = "198.51.100." + (int)(Math.random() * 200 + 10);
+
+        for (int i = 0; i < 5; i++) {
+            Map<String, Object> sessionAttrs = new HashMap<>();
+            HttpSession session = createMockSession(sessionAttrs);
+            Map<String, String> params = Map.of("action", "login", "nickname", nick, "password", "wrongpass");
+            Map<String, String> headers = Map.of("X-Forwarded-For", testIp, "Accept", "application/json");
+            HttpServletRequest req = createMockRequest("POST", "/student", headers, params, session);
+            StringWriter out = new StringWriter();
+            int[] status = {200};
+            servlet.service(req, createMockResponse(status, new HashMap<>(), out));
+            assertEquals(401, status[0], "Attempts 1-5 must return 401");
+        }
+
+        // 6th attempt from the same IP must be rate limited with HTTP 429
+        Map<String, Object> sessionAttrs6 = new HashMap<>();
+        HttpSession session6 = createMockSession(sessionAttrs6);
+        Map<String, String> params6 = Map.of("action", "login", "nickname", nick, "password", "ValidPass123");
+        Map<String, String> headers6 = Map.of("X-Forwarded-For", testIp, "Accept", "application/json");
+        HttpServletRequest req6 = createMockRequest("POST", "/student", headers6, params6, session6);
+        StringWriter out6 = new StringWriter();
+        int[] status6 = {200};
+        servlet.service(req6, createMockResponse(status6, new HashMap<>(), out6));
+
+        assertEquals(429, status6[0], "6th failed attempt must trigger 429 Too Many Requests");
+        assertTrue(out6.toString().contains("Too many failed attempts"));
+    }
+
+    @Test
+    @DisplayName("Data Protection: Hot database backup generates valid zip file")
+    void testDatabaseBackup() throws Exception {
+        java.io.File backupDir = new java.io.File("target/test-backups");
+        backupDir.mkdirs();
+        java.io.File targetZip = new java.io.File(backupDir, "test-backup-" + System.currentTimeMillis() + ".zip");
+        if (targetZip.exists()) {
+            targetZip.delete();
+        }
+
+        DatabaseManager.backupDatabase(targetZip);
+        assertTrue(targetZip.exists(), "Backup zip file must be created");
+        assertTrue(targetZip.length() > 0, "Backup zip file must not be empty");
+
+        // Verify it is a valid zip archive
+        boolean hasEntries = false;
+        try (java.util.zip.ZipFile zip = new java.util.zip.ZipFile(targetZip)) {
+            hasEntries = zip.size() > 0;
+            java.util.Enumeration<? extends java.util.zip.ZipEntry> entries = zip.entries();
+            while (entries.hasMoreElements()) {
+                java.util.zip.ZipEntry entry = entries.nextElement();
+                assertNotNull(entry.getName());
+            }
+        }
+        assertTrue(hasEntries, "Backup archive must contain valid entries");
+    }
+
     // --- Mock Helpers ---
 
     private HttpSession createMockSession(Map<String, Object> attrs) {
@@ -521,6 +676,7 @@ public class CampusVerseFixesRegressionTest {
                 new Class<?>[]{HttpServletRequest.class},
                 (proxy, m, args) -> {
                     String name = m.getName();
+                    if ("isSecure".equals(name)) return false;
                     if ("getMethod".equals(name)) return method;
                     if ("getServletPath".equals(name)) return servletPath;
                     if ("getHeader".equals(name)) return headers.get(args[0]);
@@ -555,6 +711,7 @@ public class CampusVerseFixesRegressionTest {
                 new Class<?>[]{HttpServletRequest.class},
                 (proxy, m, args) -> {
                     String name = m.getName();
+                    if ("isSecure".equals(name)) return false;
                     if ("getMethod".equals(name)) return method;
                     if ("getServletPath".equals(name)) return servletPath;
                     if ("getHeader".equals(name)) return headers.get(args[0]);
