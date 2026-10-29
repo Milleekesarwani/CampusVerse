@@ -1201,4 +1201,7 @@ render();
         })()
     ]);
     render();
+    if (current === 'chat') {
+        startChatPolling();
+    }
 })();

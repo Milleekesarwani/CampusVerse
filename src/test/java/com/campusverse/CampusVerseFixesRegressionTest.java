@@ -248,7 +248,7 @@ public class CampusVerseFixesRegressionTest {
     // --- Issue 6: Duration parsing (2h and "2 hours" mean 2 hours) ---
 
     @Test
-    @DisplayName("Fix 6: Duration parsing: 2h and '2 hours' resolve to 2 hours, rejects invalid")
+    @DisplayName("Fix 6: Duration parsing: 2h and '2 hours' resolve to 2 hours, handles edge cases (12h, 21h, 25m), rejects invalid")
     void testGhostRoomDurationParsing() {
         GhostRoomService service = new GhostRoomService(roomDAO, Clock.systemUTC());
 
@@ -257,6 +257,19 @@ public class CampusVerseFixesRegressionTest {
         assertEquals(Duration.ofHours(2), service.parseDuration("2 hours"));
         assertEquals(Duration.ofHours(2), service.parseDuration("2 hr"));
         assertEquals(Duration.ofHours(2), service.parseDuration("2"));
+
+        // Edge cases previously misparsed due to substring matching:
+        // "12 hours" must NOT parse as 2 hours
+        assertEquals(Duration.ofHours(12), service.parseDuration("12 hours"));
+        assertEquals(Duration.ofHours(12), service.parseDuration("12h"));
+
+        // "21 hours" must NOT parse as 1 hour
+        assertEquals(Duration.ofHours(21), service.parseDuration("21 hours"));
+        assertEquals(Duration.ofHours(21), service.parseDuration("21h"));
+
+        // "25 minutes" must NOT parse as 5 minutes
+        assertEquals(Duration.ofMinutes(25), service.parseDuration("25 minutes"));
+        assertEquals(Duration.ofMinutes(25), service.parseDuration("25m"));
 
         // Standard variants
         assertEquals(Duration.ofMinutes(5), service.parseDuration("5m"));
@@ -267,6 +280,33 @@ public class CampusVerseFixesRegressionTest {
         // Invalid durations
         assertThrows(IllegalArgumentException.class, () -> service.parseDuration("9999h"));
         assertThrows(IllegalArgumentException.class, () -> service.parseDuration("invalid_duration"));
+    }
+
+    @Test
+    @DisplayName("Fix: Non-JSON student login redirects to /home consistently")
+    void testLoginRedirectsToHome() throws Exception {
+        StudentServlet servlet = new StudentServlet();
+        Map<String, Object> sessionAttrs = new HashMap<>();
+        HttpSession session = createMockSession(sessionAttrs);
+
+        Map<String, String> params = Map.of("action", "login", "nickname", "HomeRedirectUser");
+        HttpServletRequest req = createMockRequest("POST", "/student", new HashMap<>(), params, session);
+        String[] redirectUrl = {null};
+        HttpServletResponse resp = (HttpServletResponse) Proxy.newProxyInstance(
+                HttpServletResponse.class.getClassLoader(),
+                new Class<?>[]{HttpServletResponse.class},
+                (proxy, m, args) -> {
+                    if ("sendRedirect".equals(m.getName())) {
+                        redirectUrl[0] = (String) args[0];
+                        return null;
+                    }
+                    return null;
+                }
+        );
+
+        servlet.service(req, resp);
+        assertNotNull(redirectUrl[0]);
+        assertTrue(redirectUrl[0].endsWith("/home"), "Login must redirect to /home, actual: " + redirectUrl[0]);
     }
 
     // --- Issue 6: Expiration checks reject messages at or after expiry ---

@@ -96,10 +96,39 @@ set "DATA_DIR=%~dp0data"
 set "DATA_DIR=!DATA_DIR:\=/!"
 set "JAVA_OPTS=%JAVA_OPTS% -Dcampusverse.db.url=jdbc:h2:!DATA_DIR!/campusverse_db;DB_CLOSE_DELAY=-1;AUTO_SERVER=TRUE"
 
-rem --- 5. Deploy WAR if present in target ---
-if exist "target\campusverse-lite.war" (
-    echo [INFO] Deploying target\campusverse-lite.war to %CATALINA_HOME%\webapps...
-    copy /y "target\campusverse-lite.war" "%CATALINA_HOME%\webapps\campusverse-lite.war" >nul
+rem --- 5. Build project with Maven and require WAR ---
+echo [INFO] Building CampusVerse Lite with Maven (mvn package -DskipTests)...
+where mvn >nul 2>&1
+if %ERRORLEVEL% equ 0 (
+    call mvn package -DskipTests
+) else if exist "%USERPROFILE%\.maven\apache-maven-3.9.6\bin\mvn.cmd" (
+    call "%USERPROFILE%\.maven\apache-maven-3.9.6\bin\mvn.cmd" package -DskipTests
+) else (
+    echo [ERROR] Maven (mvn) was not found on PATH or in %USERPROFILE%\.maven.
+    echo Please install Maven or add it to PATH to build the project before starting.
+    pause
+    exit /b 1
+)
+
+if %ERRORLEVEL% neq 0 (
+    echo [ERROR] Maven build failed! Stopping server startup.
+    pause
+    exit /b 1
+)
+
+if not exist "target\campusverse-lite.war" (
+    echo [ERROR] Required WAR file target\campusverse-lite.war was not found after build.
+    echo Cannot start Tomcat without a valid WAR deployment.
+    pause
+    exit /b 1
+)
+
+echo [INFO] Deploying verified target\campusverse-lite.war to %CATALINA_HOME%\webapps...
+copy /y "target\campusverse-lite.war" "%CATALINA_HOME%\webapps\campusverse-lite.war" >nul
+if %ERRORLEVEL% neq 0 (
+    echo [ERROR] Failed to copy WAR file to %CATALINA_HOME%\webapps.
+    pause
+    exit /b 1
 )
 
 echo ========================================================

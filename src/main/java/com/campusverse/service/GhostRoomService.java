@@ -84,38 +84,50 @@ public class GhostRoomService {
         }
         String s = input.trim().toLowerCase();
 
-        // 5 minutes
-        if (s.contains("5 min") || s.equals("5m") || s.equals("5") || s.equals("5m revision") || s.contains("5-minute")) {
-            return Duration.ofMinutes(5);
-        }
-        // 1 hour
-        if (s.contains("1 hour") || s.equals("1h") || s.equals("60m") || s.equals("1") || s.contains("1 hr")) {
-            return Duration.ofHours(1);
-        }
-        // 2 hours - explicitly requested: 2h and "2 hours" mean two hours
-        if (s.contains("2 hour") || s.equals("2h") || s.equals("120m") || s.equals("2") || s.contains("2 hr")) {
-            return Duration.ofHours(2);
-        }
-        // 6 hours
-        if (s.contains("6 hour") || s.equals("6h") || s.equals("6") || s.contains("6 hr")) {
-            return Duration.ofHours(6);
-        }
-        // 24 hours
-        if (s.contains("24 hour") || s.equals("24h") || s.equals("1d") || s.equals("24") || s.contains("24 hr")) {
-            return Duration.ofHours(24);
+        // Match minutes: e.g. "5m", "5 min", "5 mins", "5 minutes", "25 minutes", "5-minute", "5m revision"
+        java.util.regex.Matcher minMatcher = java.util.regex.Pattern
+                .compile("^(\\d+)\\s*(?:-|\\s)?\\s*(?:m|min|mins|minutes?)(?:\\b.*)?$")
+                .matcher(s);
+        if (minMatcher.matches()) {
+            long mins = Long.parseLong(minMatcher.group(1));
+            if (mins >= 1 && mins <= 1440) {
+                return Duration.ofMinutes(mins);
+            }
+            throw new IllegalArgumentException("Unsupported duration: " + input + ". Maximum is 24 hours.");
         }
 
-        // Generic patterns: e.g. "2 hours", "3h", "10m"
-        if (s.matches("^\\d+\\s*(h|hr|hrs|hours?)$")) {
-            long hours = Long.parseLong(s.replaceAll("[^0-9]", ""));
+        // Match hours: e.g. "1h", "2h", "2 hours", "12 hours", "21 hours", "6 hr", "24 hrs"
+        java.util.regex.Matcher hrMatcher = java.util.regex.Pattern
+                .compile("^(\\d+)\\s*(?:-|\\s)?\\s*(?:h|hr|hrs|hours?)(?:\\b.*)?$")
+                .matcher(s);
+        if (hrMatcher.matches()) {
+            long hours = Long.parseLong(hrMatcher.group(1));
             if (hours >= 1 && hours <= 72) {
                 return Duration.ofHours(hours);
             }
+            throw new IllegalArgumentException("Unsupported duration: " + input + ". Supported range: 1 to 72 hours.");
         }
-        if (s.matches("^\\d+\\s*(m|min|mins|minutes?)$")) {
-            long mins = Long.parseLong(s.replaceAll("[^0-9]", ""));
-            if (mins >= 1 && mins <= 1440) {
-                return Duration.ofMinutes(mins);
+
+        // Match days: e.g. "1d", "1 day", "2 days"
+        java.util.regex.Matcher dayMatcher = java.util.regex.Pattern
+                .compile("^(\\d+)\\s*(?:d|days?)(?:\\b.*)?$")
+                .matcher(s);
+        if (dayMatcher.matches()) {
+            long days = Long.parseLong(dayMatcher.group(1));
+            if (days >= 1 && days <= 3) {
+                return Duration.ofDays(days);
+            }
+            throw new IllegalArgumentException("Unsupported duration: " + input + ". Maximum is 3 days.");
+        }
+
+        // Match plain numbers: e.g. "5" (5 minutes default), "1", "2", "6", "24" (hours from dropdown values)
+        if (s.matches("^\\d+$")) {
+            long num = Long.parseLong(s);
+            if (num == 5) {
+                return Duration.ofMinutes(5);
+            }
+            if (num >= 1 && num <= 72) {
+                return Duration.ofHours(num);
             }
         }
 

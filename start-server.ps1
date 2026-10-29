@@ -76,12 +76,30 @@ if (-not (Test-Path "data")) {
 $dbPath = "$($PSScriptRoot -replace '\\','/')/data/campusverse_db"
 $env:JAVA_OPTS = "$env:JAVA_OPTS -Dcampusverse.db.url=jdbc:h2:$dbPath;DB_CLOSE_DELAY=-1;AUTO_SERVER=TRUE"
 
-# Deploy WAR if exists in target
-$targetWar = "target\campusverse-lite.war"
-if (Test-Path $targetWar) {
-    Write-Host "[INFO] Deploying $targetWar to $($env:CATALINA_HOME)\webapps..." -ForegroundColor DarkCyan
-    Copy-Item -Path $targetWar -Destination (Join-Path $env:CATALINA_HOME "webapps\campusverse-lite.war") -Force
+# Build project with Maven and require WAR
+Write-Host "[INFO] Building CampusVerse Lite with Maven (mvn package -DskipTests)..." -ForegroundColor DarkCyan
+$mvnCmd = Get-Command mvn -ErrorAction SilentlyContinue
+$mvnPath = if ($mvnCmd) { $mvnCmd.Source } elseif (Test-Path "$env:USERPROFILE\.maven\apache-maven-3.9.6\bin\mvn.cmd") { "$env:USERPROFILE\.maven\apache-maven-3.9.6\bin\mvn.cmd" } else { $null }
+
+if (-not $mvnPath) {
+    Write-Error "[ERROR] Maven (mvn) was not found on PATH or in $env:USERPROFILE\.maven.`nPlease install Maven or add it to PATH before starting."
+    exit 1
 }
+
+& $mvnPath package -DskipTests
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "[ERROR] Maven build failed with exit code $LASTEXITCODE! Stopping server startup."
+    exit 1
+}
+
+$targetWar = "target\campusverse-lite.war"
+if (-not (Test-Path $targetWar)) {
+    Write-Error "[ERROR] Required WAR file $targetWar was not found after build.`nCannot start Tomcat without a valid WAR deployment."
+    exit 1
+}
+
+Write-Host "[INFO] Deploying verified $targetWar to $($env:CATALINA_HOME)\webapps..." -ForegroundColor DarkCyan
+Copy-Item -Path $targetWar -Destination (Join-Path $env:CATALINA_HOME "webapps\campusverse-lite.war") -Force
 
 Write-Host "========================================================" -ForegroundColor Cyan
 Write-Host "Starting CampusVerse Lite on Apache Tomcat 10.1..." -ForegroundColor Green

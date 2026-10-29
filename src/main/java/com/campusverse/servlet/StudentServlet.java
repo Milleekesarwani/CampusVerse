@@ -151,7 +151,7 @@ public class StudentServlet extends HttpServlet {
                 return;
             }
 
-            response.sendRedirect(request.getContextPath() + "/dashboard");
+            response.sendRedirect(request.getContextPath() + "/home");
         } catch (IllegalArgumentException e) {
             response.sendRedirect(request.getContextPath() + "/home?error=" + urlEncode(e.getMessage()));
         } catch (SQLException e) {
