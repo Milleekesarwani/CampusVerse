@@ -134,11 +134,19 @@ public class DatabaseManager {
                     id BIGINT AUTO_INCREMENT PRIMARY KEY,
                     name VARCHAR(100) NOT NULL,
                     type VARCHAR(20) NOT NULL,
+                    topic VARCHAR(300),
+                    subject VARCHAR(50),
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     expires_at TIMESTAMP NULL,
                     status VARCHAR(20) NOT NULL
                 );
             """);
+
+            // Ensure topic and subject columns exist for backwards compatibility with pre-existing databases
+            try {
+                stmt.execute("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS topic VARCHAR(300)");
+                stmt.execute("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS subject VARCHAR(50)");
+            } catch (SQLException ignored) {}
 
             // 5. Messages table
             stmt.execute("""

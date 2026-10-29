@@ -77,11 +77,4 @@ echo CATALINA_HOME: %CATALINA_HOME%
 echo ========================================================
 
 call "%CATALINA_HOME%\bin\catalina.bat" stop
-
-rem Clean up any hanging process on port 8080
-timeout /t 2 >nul
-for /f "tokens=5" %%a in ('netstat -aon ^| findstr /r ":8080 .*LISTENING"') do (
-    echo [INFO] Terminating hanging process on port 8080 (PID %%a)...
-    taskkill /f /pid %%a >nul 2>&1
-)
-echo Server stopped.
+echo Server stop signal sent.

@@ -253,11 +253,29 @@ public class DoubtServlet extends HttpServlet {
             }
             response.sendRedirect(request.getContextPath() + "/doubts?id=" + doubtId + "&msg=Doubt+marked+as+RESOLVED");
         } catch (SecurityException e) {
+            if (isJson) {
+                response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                response.setContentType("application/json;charset=UTF-8");
+                response.getWriter().write("{\"error\":\"" + SecurityUtils.escapeJson(e.getMessage()) + "\"}");
+                return;
+            }
             response.sendError(HttpServletResponse.SC_FORBIDDEN, e.getMessage());
         } catch (IllegalArgumentException e) {
+            if (isJson) {
+                response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+                response.setContentType("application/json;charset=UTF-8");
+                response.getWriter().write("{\"error\":\"" + SecurityUtils.escapeJson(e.getMessage()) + "\"}");
+                return;
+            }
             response.sendError(HttpServletResponse.SC_BAD_REQUEST, e.getMessage());
         } catch (SQLException e) {
             LOGGER.log(Level.SEVERE, "Failed to resolve doubt", e);
+            if (isJson) {
+                response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+                response.setContentType("application/json;charset=UTF-8");
+                response.getWriter().write("{\"error\":\"Database error\"}");
+                return;
+            }
             response.sendError(HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "Database error");
         }
     }

@@ -102,6 +102,7 @@ public class StudentServlet extends HttpServlet {
                 handleUpdateInterests(request, response);
                 break;
             case "saveProfile":
+            case "update_profile":
                 handleSaveProfile(request, response);
                 break;
             case "logout":
@@ -202,6 +203,9 @@ public class StudentServlet extends HttpServlet {
         String accept = request.getHeader("Accept");
         boolean isJson = "true".equalsIgnoreCase(request.getParameter("json")) || (accept != null && accept.contains("application/json"));
 
+        HttpSession session = request.getSession(false);
+        Student current = (session != null) ? (Student) session.getAttribute("currentStudent") : null;
+
         String rawNickname = request.getParameter("nickname");
         if (rawNickname == null || rawNickname.trim().isEmpty()) {
             if (isJson) {
@@ -218,17 +222,41 @@ public class StudentServlet extends HttpServlet {
         String sanitizedNick = nickname.replaceAll("\\s+", "_");
 
         try {
-            Student student = studentDAO.findOrCreateByNickname(sanitizedNick);
-            HttpSession session = request.getSession(true);
+            Student student;
+            if (current != null) {
+                if (!sanitizedNick.equalsIgnoreCase(current.getNickname())) {
+                    Student existingWithNick = studentDAO.findByNickname(sanitizedNick);
+                    if (existingWithNick != null && !existingWithNick.getId().equals(current.getId())) {
+                        if (isJson) {
+                            response.setStatus(HttpServletResponse.SC_CONFLICT);
+                            response.setContentType("application/json;charset=UTF-8");
+                            response.getWriter().write("{\"error\":\"Nickname already taken by another student\"}");
+                        } else {
+                            response.sendRedirect(request.getContextPath() + "/home?error=Nickname+already+taken");
+                        }
+                        return;
+                    }
+                    studentDAO.updateNickname(current.getId(), sanitizedNick);
+                    current.setNickname(sanitizedNick);
+                }
+                student = studentDAO.findById(current.getId());
+            } else {
+                student = studentDAO.findOrCreateByNickname(sanitizedNick);
+            }
+
+            if (session == null) {
+                session = request.getSession(true);
+            }
             session.setAttribute("currentStudent", student);
             session.setAttribute("studentId", student.getId());
             session.setAttribute("nickname", rawNickname.trim());
 
             String[] interestNames = request.getParameterValues("interests");
+            List<Long> matchedIds = new ArrayList<>();
             if (interestNames != null) {
                 List<Interest> allInterests = studentDAO.getAllInterests();
-                List<Long> matchedIds = new ArrayList<>();
                 for (String inName : interestNames) {
+                    if (inName == null || inName.trim().isEmpty()) continue;
                     for (Interest item : allInterests) {
                         if (item.getName().equalsIgnoreCase(inName.trim())) {
                             matchedIds.add(item.getId());
@@ -236,16 +264,26 @@ public class StudentServlet extends HttpServlet {
                         }
                     }
                 }
-                studentDAO.setStudentInterests(student.getId(), matchedIds);
-                student.setInterests(studentDAO.getStudentInterests(student.getId()));
-                session.setAttribute("currentStudent", student);
             }
+
+            // Save interests (clearing all interests when none provided)
+            studentDAO.setStudentInterests(student.getId(), matchedIds);
+            student.setInterests(studentDAO.getStudentInterests(student.getId()));
+            session.setAttribute("currentStudent", student);
 
             if (isJson) {
                 response.setContentType("application/json;charset=UTF-8");
                 response.getWriter().write("{\"success\":true,\"nickname\":\"" + SecurityUtils.escapeJson(rawNickname.trim()) + "\"}");
             } else {
                 response.sendRedirect(request.getContextPath() + "/home?msg=Profile+saved+successfully");
+            }
+        } catch (IllegalArgumentException e) {
+            if (isJson) {
+                response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+                response.setContentType("application/json;charset=UTF-8");
+                response.getWriter().write("{\"error\":\"" + SecurityUtils.escapeJson(e.getMessage()) + "\"}");
+            } else {
+                response.sendRedirect(request.getContextPath() + "/home?error=" + urlEncode(e.getMessage()));
             }
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Failed to save profile", e);

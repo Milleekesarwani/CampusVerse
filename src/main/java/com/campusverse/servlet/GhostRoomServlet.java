@@ -55,11 +55,14 @@ public class GhostRoomServlet extends HttpServlet {
                     if (i > 0) sb.append(",");
                     long expires = r.getExpiresAt() != null ? r.getExpiresAt().getTime() : 0;
                     boolean isExp = r.isExpired();
+                    String topic = (r.getTopic() != null && !r.getTopic().isEmpty()) ? r.getTopic() : "Live temporary study room";
+                    String subject = (r.getSubject() != null && !r.getSubject().isEmpty()) ? r.getSubject() : "General";
                     sb.append("{")
                       .append("\"id\":").append(r.getId()).append(",")
+                      .append("\"name\":\"").append(SecurityUtils.escapeJson(r.getName())).append("\",")
                       .append("\"title\":\"").append(SecurityUtils.escapeJson(r.getName())).append("\",")
-                      .append("\"topic\":\"Live temporary study room\",")
-                      .append("\"subject\":\"General\",")
+                      .append("\"topic\":\"").append(SecurityUtils.escapeJson(topic)).append("\",")
+                      .append("\"subject\":\"").append(SecurityUtils.escapeJson(subject)).append("\",")
                       .append("\"expires\":").append(expires).append(",")
                       .append("\"expired\":").append(isExp).append(",")
                       .append("\"status\":\"").append(SecurityUtils.escapeJson(r.getStatus())).append("\",")
@@ -106,17 +109,31 @@ public class GhostRoomServlet extends HttpServlet {
         }
 
         String name = request.getParameter("name");
+        if (name == null || name.trim().isEmpty()) {
+            name = request.getParameter("title");
+        }
         String duration = request.getParameter("duration");
+        if (duration == null || duration.trim().isEmpty()) {
+            duration = request.getParameter("hours");
+            if (duration != null && !duration.trim().isEmpty() && !duration.contains("h") && !duration.contains("m")) {
+                duration = duration.trim() + "h";
+            }
+        }
+        String topic = request.getParameter("topic");
+        String subject = request.getParameter("subject");
 
         try {
-            Room room = ghostRoomService.createGhostRoom(name, duration);
+            Room room = ghostRoomService.createGhostRoom(name, duration, topic, subject);
             if (isJson) {
                 response.setContentType("application/json;charset=UTF-8");
                 long expires = room.getExpiresAt() != null ? room.getExpiresAt().getTime() : 0;
                 response.getWriter().write(String.format(
-                        "{\"success\":true,\"roomId\":%d,\"name\":\"%s\",\"expires\":%d}",
+                        "{\"success\":true,\"roomId\":%d,\"name\":\"%s\",\"title\":\"%s\",\"topic\":\"%s\",\"subject\":\"%s\",\"expires\":%d}",
                         room.getId(),
                         SecurityUtils.escapeJson(room.getName()),
+                        SecurityUtils.escapeJson(room.getName()),
+                        SecurityUtils.escapeJson(room.getTopic() != null ? room.getTopic() : ""),
+                        SecurityUtils.escapeJson(room.getSubject() != null ? room.getSubject() : "General"),
                         expires
                 ));
                 return;

@@ -26,33 +26,8 @@ public class HomeServlet extends HttpServlet {
     @Override
     protected void doGet(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
-        HttpSession session = request.getSession(true);
+        HttpSession session = request.getSession(false);
         Student current = (session != null) ? (Student) session.getAttribute("currentStudent") : null;
-
-        if (current == null) {
-            try {
-                Student defaultStudent = studentDAO.findOrCreateByNickname("Milee_Kesarwani");
-                List<Interest> interests = studentDAO.getStudentInterests(defaultStudent.getId());
-                if (interests == null || interests.isEmpty()) {
-                    List<Interest> all = studentDAO.getAllInterests();
-                    List<Long> matched = all.stream()
-                        .filter(i -> "Java".equalsIgnoreCase(i.getName()) || "DSA".equalsIgnoreCase(i.getName()) || "Hackathons".equalsIgnoreCase(i.getName()))
-                        .map(Interest::getId)
-                        .toList();
-                    studentDAO.setStudentInterests(defaultStudent.getId(), matched);
-                    defaultStudent.setInterests(studentDAO.getStudentInterests(defaultStudent.getId()));
-                } else {
-                    defaultStudent.setInterests(interests);
-                }
-                current = defaultStudent;
-                if (session != null) {
-                    session.setAttribute("currentStudent", current);
-                    session.setAttribute("studentId", current.getId());
-                    session.setAttribute("nickname", "Milee Kesarwani");
-                }
-            } catch (SQLException ignored) {
-            }
-        }
 
         request.setAttribute("appName", "campusverse LITE");
         request.setAttribute("tagline", "A little community. A lot of possibility.");

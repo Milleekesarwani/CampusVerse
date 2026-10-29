@@ -80,43 +80,26 @@ if not exist "%CATALINA_HOME%\bin\catalina.bat" (
     exit /b 1
 )
 
-rem --- 3. Check and clean port 8080 collision ---
+rem --- 3. Check for port 8080 conflict without killing arbitrary processes ---
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr /r ":8080 .*LISTENING"') do (
-    echo [WARNING] Port 8080 is currently occupied by PID %%a. Terminating stale process...
-    taskkill /f /pid %%a >nul 2>&1
-    timeout /t 1 >nul
+    echo [ERROR] Port 8080 is already occupied by process PID %%a.
+    echo Please stop the conflicting process or shut down the running Tomcat instance before starting CampusVerse Lite.
+    echo If an earlier CampusVerse instance is running, you can stop it using stop-server.bat.
+    echo.
+    pause
+    exit /b 1
 )
 
-rem --- 4. Clean stale DB locks & duplicate ROOT listeners ---
-if exist "data\campusverse_db.lock.db" (
-    del /f /q "data\campusverse_db.lock.db" 2>nul
-)
-
-if exist "%CATALINA_HOME%\webapps\ROOT\WEB-INF\classes" (
-    rmdir /s /q "%CATALINA_HOME%\webapps\ROOT\WEB-INF\classes" 2>nul
-)
-if exist "%CATALINA_HOME%\webapps\ROOT\WEB-INF\lib" (
-    rmdir /s /q "%CATALINA_HOME%\webapps\ROOT\WEB-INF\lib" 2>nul
-)
-
-rem --- 5. Configure absolute database path with AUTO_SERVER mode ---
+rem --- 4. Configure database path with AUTO_SERVER mode ---
 if not exist "%~dp0data" mkdir "%~dp0data" 2>nul
 set "DATA_DIR=%~dp0data"
 set "DATA_DIR=!DATA_DIR:\=/!"
 set "JAVA_OPTS=%JAVA_OPTS% -Dcampusverse.db.url=jdbc:h2:!DATA_DIR!/campusverse_db;DB_CLOSE_DELAY=-1;AUTO_SERVER=TRUE"
 
-rem --- 6. Deploy WAR if present in target ---
+rem --- 5. Deploy WAR if present in target ---
 if exist "target\campusverse-lite.war" (
     echo [INFO] Deploying target\campusverse-lite.war to %CATALINA_HOME%\webapps...
     copy /y "target\campusverse-lite.war" "%CATALINA_HOME%\webapps\campusverse-lite.war" >nul
-)
-
-rem --- 7. Ensure ROOT redirects to /campusverse-lite/ ---
-if not exist "%CATALINA_HOME%\webapps\ROOT" (
-    mkdir "%CATALINA_HOME%\webapps\ROOT" 2>nul
-)
-if not exist "%CATALINA_HOME%\webapps\ROOT\index.html" (
-    echo ^<!DOCTYPE html^>^<html^>^<head^>^<meta http-equiv="refresh" content="0; url=/campusverse-lite/"^>^<title^>Redirecting...^</title^>^</head^>^<body^>^<p^>Redirecting to ^<a href="/campusverse-lite/"^>CampusVerse Lite^</a^>...^</p^>^</body^>^</html^> > "%CATALINA_HOME%\webapps\ROOT\index.html"
 )
 
 echo ========================================================
@@ -125,7 +108,6 @@ echo JAVA_HOME:     %JAVA_HOME%
 echo CATALINA_HOME: %CATALINA_HOME%
 echo Database:      jdbc:h2:!DATA_DIR!/campusverse_db (AUTO_SERVER=TRUE)
 echo Local URL:     http://localhost:8080/campusverse-lite/
-echo Root URL:      http://localhost:8080/
 echo ========================================================
 
 call "%CATALINA_HOME%\bin\catalina.bat" run

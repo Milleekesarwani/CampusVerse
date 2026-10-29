@@ -155,6 +155,26 @@ public class StudentDAO {
         }
     }
 
+    public void updateNickname(Long studentId, String rawNickname) throws SQLException {
+        if (studentId == null) {
+            throw new IllegalArgumentException("Student ID cannot be null");
+        }
+        if (rawNickname == null) {
+            throw new IllegalArgumentException("Nickname cannot be null");
+        }
+        String nickname = rawNickname.trim();
+        if (nickname.isEmpty() || nickname.length() > 50 || !nickname.matches("^[a-zA-Z0-9_.-]+$")) {
+            throw new IllegalArgumentException("Invalid nickname. Must be 1-50 alphanumeric characters (or _.-)");
+        }
+        String sql = "UPDATE students SET nickname = ? WHERE id = ?";
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setString(1, nickname);
+            stmt.setLong(2, studentId);
+            stmt.executeUpdate();
+        }
+    }
+
     public List<Student> getAllStudents() throws SQLException {
         List<Student> students = new ArrayList<>();
         String sql = "SELECT id, nickname, created_at FROM students ORDER BY id ASC";

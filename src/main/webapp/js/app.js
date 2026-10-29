@@ -19,9 +19,9 @@ function getCsrfToken() {
 // Global state
 const defaults = {
     profile: {
-        id: (window.INITIAL_STUDENT && window.INITIAL_STUDENT.id) || 1,
-        name: (window.INITIAL_STUDENT && window.INITIAL_STUDENT.name) || 'Milee Kesarwani',
-        interests: ['Java', 'DSA', 'Hackathons']
+        id: (window.INITIAL_STUDENT && window.INITIAL_STUDENT.id) || null,
+        name: (window.INITIAL_STUDENT && window.INITIAL_STUDENT.name) || '',
+        interests: []
     },
     messages: {},
     connections: [],
@@ -32,8 +32,11 @@ const defaults = {
 let state;
 try {
     state = { ...defaults, ...JSON.parse(localStorage.getItem('campusverse-v1') || '{}') };
-    if (window.INITIAL_STUDENT && window.INITIAL_STUDENT.name) {
-        state.profile.name = window.INITIAL_STUDENT.name;
+    if (window.INITIAL_STUDENT && window.INITIAL_STUDENT.id) {
+        state.profile.id = window.INITIAL_STUDENT.id;
+        if (window.INITIAL_STUDENT.name) {
+            state.profile.name = window.INITIAL_STUDENT.name;
+        }
     }
 } catch (e) {
     state = structuredClone(defaults);
@@ -63,7 +66,7 @@ function initials(s) {
 }
 
 function name() {
-    return state.profile.name || 'Milee Kesarwani';
+    return state.profile.name || (window.INITIAL_STUDENT && window.INITIAL_STUDENT.name) || 'Student';
 }
 
 const interests = ['Java', 'DSA', 'UI/UX', 'React', 'Hackathons', 'Gaming', 'DBMS', 'Python'];
@@ -85,18 +88,11 @@ const subjects = ['DSA', 'Java', 'DBMS', 'General'];
 // Dynamic study room map
 let roomMap = { 'Java': 1, 'DSA': 2, 'DBMS': 3, 'General': 4 };
 
-// Peer list populated dynamically from server
+// Peer list populated dynamically from server (no mock fallback in live VibeMatch flow)
 let serverPeers = [];
-let defaultPeers = [
-    { id: 37, name: 'Aman Sharma', initials: 'AS', color: 'peach', score: 67, interests: ['Java', 'React', 'Hackathons'], sharedInterests: ['Java', 'Hackathons'], bio: 'Building things. Breaking things. Learning both ways.', year: 'CSE · 2nd year' },
-    { id: 38, name: 'Riya Verma', initials: 'RV', color: 'pink', score: 100, interests: ['Java', 'DSA', 'Hackathons'], sharedInterests: ['Java', 'DSA', 'Hackathons'], bio: 'One more problem before I call it a day.', year: 'CSE · 2nd year' },
-    { id: 39, name: 'Kabir Singh', initials: 'KS', color: 'blue', score: 0, interests: ['UI/UX', 'React', 'Gaming'], sharedInterests: [], bio: 'Good interfaces and late-night gaming sessions.', year: 'CSE · 3rd year' },
-    { id: 40, name: 'Ananya Das', initials: 'AD', color: 'lime', score: 25, interests: ['DBMS', 'Python', 'DSA'], sharedInterests: ['DSA'], bio: 'Turning confusing concepts into little diagrams.', year: 'CSE · 2nd year' }
-];
 
 function getPeers() {
-    if (serverPeers && serverPeers.length > 0) return serverPeers;
-    return defaultPeers;
+    return serverPeers;
 }
 
 // Doubts & GhostRooms helpers
@@ -353,6 +349,8 @@ function chat() {
 }
 
 let chatPollInterval = null;
+let isChatPolling = false;
+const roomCursors = {}; // Per-room cursor tracking highest message ID received
 
 function startChatPolling() {
     stopChatPolling();
@@ -365,56 +363,114 @@ function stopChatPolling() {
         clearInterval(chatPollInterval);
         chatPollInterval = null;
     }
+    isChatPolling = false;
 }
 
 async function loadRemoteMessages() {
     if (current !== 'chat') return;
+    if (isChatPolling) return; // Prevent overlapping polls
+
     const key = ghostId || room;
     const numId = ghostId ? parseInt(ghostId.replace(/\D/g, '') || '999') : (roomMap[room] || 1);
+    const targetRoomId = numId;
+    const targetKey = key;
+
+    isChatPolling = true;
 
     try {
-        const res = await fetch(`${ctx}/api/messages?roomId=${numId}`, {
-            headers: { 'Accept': 'application/json' }
-        });
-        if (res.ok) {
-            const list = await res.json();
-            if (Array.isArray(list)) {
-                const mapped = list.map(m => ({
-                    id: m.id,
-                    author: m.senderNickname || 'Student',
-                    senderNickname: m.senderNickname || 'Student',
-                    text: m.content,
-                    content: m.content,
-                    time: m.createdAt ? m.createdAt.slice(11, 16) : 'Just now',
-                    createdAt: m.createdAt
-                }));
-                state.messages[key] = mapped;
+        let hasMore = true;
+        let newMessagesCount = 0;
 
-                const msgBox = $('#chat-messages');
-                if (msgBox) {
-                    const wasAtBottom = (msgBox.scrollHeight - msgBox.scrollTop - msgBox.clientHeight) < 60;
-                    if (mapped.length === 0) {
-                        msgBox.innerHTML = `<div class="empty" style="padding:40px 20px;">No messages in #${esc(room)} yet. Be the first to start the conversation!</div>`;
-                    } else {
-                        msgBox.innerHTML = mapped.map(m => {
-                            const isMine = m.author === name() || m.senderNickname === name();
-                            const color = isMine ? 'lime' : 'purple';
-                            return `
-                                <div class="message ${isMine ? 'mine' : ''}">
-                                    <span class="avatar ${color}">${esc(initials(m.author))}</span>
-                                    <div>
-                                        <b>${esc(m.author)}</b><time>${esc(m.time)}</time>
-                                        <div class="bubble">${esc(m.text)}</div>
-                                    </div>
-                                </div>
-                            `;
-                        }).join('');
-                    }
-                    if (wasAtBottom) msgBox.scrollTop = msgBox.scrollHeight;
+        while (hasMore) {
+            // If the user navigated away or changed rooms while polling, abort immediately
+            const currentNumId = ghostId ? parseInt(ghostId.replace(/\D/g, '') || '999') : (roomMap[room] || 1);
+            if (targetRoomId !== currentNumId || current !== 'chat') {
+                return; // Ignore responses belonging to a previously selected room
+            }
+
+            const cursor = roomCursors[targetRoomId] || 0;
+            const res = await fetch(`${ctx}/api/messages?roomId=${targetRoomId}&afterId=${cursor}`, {
+                headers: { 'Accept': 'application/json' }
+            });
+
+            // Re-verify room did not change during async fetch
+            const postFetchNumId = ghostId ? parseInt(ghostId.replace(/\D/g, '') || '999') : (roomMap[room] || 1);
+            if (targetRoomId !== postFetchNumId || current !== 'chat') {
+                return; // Discard stale room response
+            }
+
+            if (!res.ok) break;
+
+            const list = await res.json();
+            if (!Array.isArray(list) || list.length === 0) {
+                hasMore = false;
+                break;
+            }
+
+            const mapped = list.map(m => ({
+                id: m.id,
+                author: m.senderNickname || 'Student',
+                senderNickname: m.senderNickname || 'Student',
+                text: m.content,
+                content: m.content,
+                time: m.createdAt ? m.createdAt.slice(11, 16) : 'Just now',
+                createdAt: m.createdAt
+            }));
+
+            // Merge messages by server ID to guarantee uniqueness and order
+            if (!state.messages[targetKey]) {
+                state.messages[targetKey] = [];
+            }
+            const existingMap = new Map(state.messages[targetKey].map(m => [m.id, m]));
+            mapped.forEach(m => existingMap.set(m.id, m));
+            state.messages[targetKey] = Array.from(existingMap.values()).sort((a, b) => a.id - b.id);
+
+            // Advance room cursor to maximum received ID
+            for (const m of mapped) {
+                if (m.id > (roomCursors[targetRoomId] || 0)) {
+                    roomCursors[targetRoomId] = m.id;
                 }
             }
+
+            newMessagesCount += mapped.length;
+
+            // Continue fetching if full chunk (100) received to retrieve messages beyond 100
+            if (list.length < 100) {
+                hasMore = false;
+            }
         }
-    } catch (e) {}
+
+        // Render merged messages into UI
+        const msgBox = $('#chat-messages');
+        if (msgBox && current === 'chat') {
+            const currentNumId = ghostId ? parseInt(ghostId.replace(/\D/g, '') || '999') : (roomMap[room] || 1);
+            if (targetRoomId === currentNumId) {
+                const wasAtBottom = (msgBox.scrollHeight - msgBox.scrollTop - msgBox.clientHeight) < 60;
+                const currentList = state.messages[targetKey] || [];
+                if (currentList.length === 0) {
+                    msgBox.innerHTML = `<div class="empty" style="padding:40px 20px;">No messages in #${esc(room)} yet. Be the first to start the conversation!</div>`;
+                } else {
+                    msgBox.innerHTML = currentList.map(m => {
+                        const isMine = m.author === name() || m.senderNickname === name();
+                        const color = isMine ? 'lime' : 'purple';
+                        return `
+                            <div class="message ${isMine ? 'mine' : ''}">
+                                <span class="avatar ${color}">${esc(initials(m.author))}</span>
+                                <div>
+                                    <b>${esc(m.author)}</b><time>${esc(m.time)}</time>
+                                    <div class="bubble">${esc(m.text)}</div>
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+                }
+                if (wasAtBottom) msgBox.scrollTop = msgBox.scrollHeight;
+            }
+        }
+    } catch (e) {
+    } finally {
+        isChatPolling = false;
+    }
 }
 
 async function sendMessage(e) {
@@ -519,20 +575,18 @@ function match() {
 }
 
 async function toggleInterest(i) {
-    const a = state.profile.interests;
-    state.profile.interests = a.includes(i) ? a.filter(x => x !== i) : [...a, i];
-    save();
-    render();
+    const a = state.profile.interests || [];
+    const nextInterests = a.includes(i) ? a.filter(x => x !== i) : [...a, i];
 
     try {
         const token = getCsrfToken();
         const p = new URLSearchParams();
-        p.append('action', 'update_profile');
+        p.append('action', 'saveProfile');
         p.append('nickname', name());
         p.append('csrfToken', token);
-        state.profile.interests.forEach(it => p.append('interests', it));
+        nextInterests.forEach(it => p.append('interests', it));
 
-        await fetch(`${ctx}/student`, {
+        const res = await fetch(`${ctx}/student`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded',
@@ -542,9 +596,20 @@ async function toggleInterest(i) {
             body: p.toString()
         });
 
+        if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            toast(errData.error || 'Failed to update interest.');
+            return;
+        }
+
+        state.profile.interests = nextInterests;
+        save();
+        render();
         await fetchVibeMatches();
         if (current === 'match') render();
-    } catch (e) {}
+    } catch (e) {
+        toast('Network error updating interest.');
+    }
 }
 
 async function fetchVibeMatches() {
@@ -554,7 +619,7 @@ async function fetchVibeMatches() {
         });
         if (res.ok) {
             const data = await res.json();
-            if (Array.isArray(data) && data.length > 0) {
+            if (Array.isArray(data)) {
                 serverPeers = data;
             }
         }
@@ -664,12 +729,14 @@ async function submitGhost(e) {
         const p = new URLSearchParams();
         p.append('action', 'create');
         p.append('title', title);
+        p.append('name', title);
         p.append('topic', topic);
         p.append('subject', subject);
         p.append('hours', hours);
+        p.append('duration', hours + 'h');
         p.append('csrfToken', token);
 
-        await fetch(`${ctx}/ghostrooms`, {
+        const res = await fetch(`${ctx}/ghostrooms`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded',
@@ -679,12 +746,23 @@ async function submitGhost(e) {
             body: p.toString()
         });
 
-        await fetchGhostRooms();
-    } catch (err) {}
+        if (!res.ok) {
+            let errMsg = 'Failed to create GhostRoom';
+            try {
+                const errData = await res.json();
+                if (errData && errData.error) errMsg = errData.error;
+            } catch (_) {}
+            toast(errMsg);
+            return;
+        }
 
-    $('#dialog').close();
-    navigate('ghost');
-    toast('Your GhostRoom is ready.');
+        await fetchGhostRooms();
+        $('#dialog').close();
+        navigate('ghost');
+        toast('A temporary sanctuary is live. GhostRoom created.');
+    } catch (err) {
+        toast('Network error creating GhostRoom');
+    }
 }
 
 async function fetchGhostRooms() {
@@ -798,7 +876,7 @@ async function submitDoubt(e) {
         p.append('body', body);
         p.append('csrfToken', token);
 
-        await fetch(`${ctx}/doubts`, {
+        const res = await fetch(`${ctx}/doubts`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded',
@@ -808,12 +886,23 @@ async function submitDoubt(e) {
             body: p.toString()
         });
 
-        await fetchDoubts();
-    } catch (err) {}
+        if (!res.ok) {
+            let errMsg = 'Failed to drop doubt';
+            try {
+                const errData = await res.json();
+                if (errData && errData.error) errMsg = errData.error;
+            } catch (_) {}
+            toast(errMsg);
+            return;
+        }
 
-    $('#dialog').close();
-    navigate('doubts');
-    toast('Your question is out there.');
+        await fetchDoubts();
+        $('#dialog').close();
+        navigate('doubts');
+        toast('Out in the open. Question posted.');
+    } catch (err) {
+        toast('Network error posting question');
+    }
 }
 
 async function fetchDoubts() {
@@ -883,7 +972,7 @@ async function replyDoubt(e, id) {
         p.append('reply', val);
         p.append('csrfToken', token);
 
-        await fetch(`${ctx}/doubts/answer`, {
+        const res = await fetch(`${ctx}/doubts/answer`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded',
@@ -893,13 +982,24 @@ async function replyDoubt(e, id) {
             body: p.toString()
         });
 
-        await fetchDoubts();
-    } catch (err) {}
+        if (!res.ok) {
+            let errMsg = 'Failed to post reply';
+            try {
+                const errData = await res.json();
+                if (errData && errData.error) errMsg = errData.error;
+            } catch (_) {}
+            toast(errMsg);
+            return;
+        }
 
-    $('#dialog').close();
-    render();
-    viewDoubt(id);
-    toast('A little help, delivered.');
+        await fetchDoubts();
+        $('#dialog').close();
+        render();
+        viewDoubt(id);
+        toast('A little help, delivered.');
+    } catch (err) {
+        toast('Network error posting reply');
+    }
 }
 
 async function resolveDoubt(id) {
@@ -910,7 +1010,7 @@ async function resolveDoubt(id) {
         p.append('doubtId', String(id).replace(/\D/g, '') || '1');
         p.append('csrfToken', token);
 
-        await fetch(`${ctx}/doubts`, {
+        const res = await fetch(`${ctx}/doubts`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded',
@@ -920,12 +1020,23 @@ async function resolveDoubt(id) {
             body: p.toString()
         });
 
-        await fetchDoubts();
-    } catch (err) {}
+        if (!res.ok) {
+            let errMsg = 'Only author can resolve';
+            try {
+                const errData = await res.json();
+                if (errData && errData.error) errMsg = errData.error;
+            } catch (_) {}
+            toast(errMsg);
+            return;
+        }
 
-    $('#dialog').close();
-    render();
-    toast('Doubt status updated.');
+        await fetchDoubts();
+        $('#dialog').close();
+        render();
+        toast('Doubt status updated.');
+    } catch (err) {
+        toast('Network error updating doubt status');
+    }
 }
 
 // --- View 6: Profile ---
@@ -961,19 +1072,15 @@ async function saveProfile(e) {
     const n = new FormData(e.target).get('nickname').trim();
     if (!n) return;
 
-    state.profile.name = n;
-    save();
-    render();
-
     try {
         const token = getCsrfToken();
         const p = new URLSearchParams();
-        p.append('action', 'update_profile');
+        p.append('action', 'saveProfile');
         p.append('nickname', n);
         p.append('csrfToken', token);
         state.profile.interests.forEach(it => p.append('interests', it));
 
-        await fetch(`${ctx}/student`, {
+        const res = await fetch(`${ctx}/student`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded',
@@ -982,10 +1089,26 @@ async function saveProfile(e) {
             },
             body: p.toString()
         });
-        await fetchVibeMatches();
-    } catch (err) {}
 
-    toast('Looking like you. Profile saved.');
+        if (!res.ok) {
+            let errMsg = 'Failed to save profile';
+            try {
+                const errData = await res.json();
+                if (errData && errData.error) errMsg = errData.error;
+            } catch (_) {}
+            toast(errMsg);
+            return;
+        }
+
+        state.profile.name = n;
+        save();
+        render();
+        await fetchVibeMatches();
+        toast('Looking like you. Profile saved.');
+        navigate('home');
+    } catch (err) {
+        toast('Network error updating profile');
+    }
 }
 
 // --- View 7: Saved Activity ---
@@ -1058,6 +1181,20 @@ render();
                     const data = await res.json();
                     if (Array.isArray(data)) {
                         data.forEach(r => { roomMap[r.name] = r.id; });
+                    }
+                }
+            } catch (e) {}
+        })(),
+        (async () => {
+            try {
+                const res = await fetch(`${ctx}/student?json=true`, { headers: { 'Accept': 'application/json' } });
+                if (res.ok) {
+                    const d = await res.json();
+                    if (d && d.loggedIn && d.nickname) {
+                        state.profile.id = d.id;
+                        state.profile.name = d.nickname.replace(/_/g, ' ');
+                        state.profile.interests = Array.isArray(d.interests) ? d.interests : [];
+                        save();
                     }
                 }
             } catch (e) {}

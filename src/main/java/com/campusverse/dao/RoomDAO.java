@@ -11,7 +11,7 @@ public class RoomDAO {
 
     public List<Room> findStudyRooms() throws SQLException {
         List<Room> list = new ArrayList<>();
-        String sql = "SELECT id, name, type, created_at, expires_at, status FROM rooms WHERE type = 'STUDY' ORDER BY id ASC";
+        String sql = "SELECT id, name, type, topic, subject, created_at, expires_at, status FROM rooms WHERE type = 'STUDY' ORDER BY id ASC";
         try (Connection conn = DatabaseManager.getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql);
              ResultSet rs = stmt.executeQuery()) {
@@ -24,7 +24,7 @@ public class RoomDAO {
 
     public Room findById(Long id) throws SQLException {
         if (id == null) return null;
-        String sql = "SELECT id, name, type, created_at, expires_at, status FROM rooms WHERE id = ?";
+        String sql = "SELECT id, name, type, topic, subject, created_at, expires_at, status FROM rooms WHERE id = ?";
         try (Connection conn = DatabaseManager.getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
             stmt.setLong(1, id);
@@ -39,7 +39,7 @@ public class RoomDAO {
 
     public List<Room> findAllGhostRooms() throws SQLException {
         List<Room> list = new ArrayList<>();
-        String sql = "SELECT id, name, type, created_at, expires_at, status FROM rooms WHERE type = 'GHOST' ORDER BY created_at DESC";
+        String sql = "SELECT id, name, type, topic, subject, created_at, expires_at, status FROM rooms WHERE type = 'GHOST' ORDER BY created_at DESC";
         try (Connection conn = DatabaseManager.getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql);
              ResultSet rs = stmt.executeQuery()) {
@@ -54,15 +54,17 @@ public class RoomDAO {
         if (room == null || room.getName() == null || room.getName().trim().isEmpty()) {
             throw new IllegalArgumentException("Room name cannot be empty");
         }
-        String sql = "INSERT INTO rooms (name, type, created_at, expires_at, status) VALUES (?, ?, ?, ?, ?)";
+        String sql = "INSERT INTO rooms (name, type, topic, subject, created_at, expires_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)";
         try (Connection conn = DatabaseManager.getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
             stmt.setString(1, room.getName().trim());
             stmt.setString(2, room.getType() != null ? room.getType() : "STUDY");
+            stmt.setString(3, room.getTopic());
+            stmt.setString(4, room.getSubject() != null ? room.getSubject() : "General");
             Timestamp now = room.getCreatedAt() != null ? room.getCreatedAt() : new Timestamp(System.currentTimeMillis());
-            stmt.setTimestamp(3, now);
-            stmt.setTimestamp(4, room.getExpiresAt());
-            stmt.setString(5, room.getStatus() != null ? room.getStatus() : "ACTIVE");
+            stmt.setTimestamp(5, now);
+            stmt.setTimestamp(6, room.getExpiresAt());
+            stmt.setString(7, room.getStatus() != null ? room.getStatus() : "ACTIVE");
 
             stmt.executeUpdate();
             try (ResultSet rs = stmt.getGeneratedKeys()) {
@@ -88,10 +90,21 @@ public class RoomDAO {
     }
 
     private Room mapResultSetToRoom(ResultSet rs) throws SQLException {
+        String topic = null;
+        String subject = null;
+        try {
+            topic = rs.getString("topic");
+        } catch (SQLException ignored) {}
+        try {
+            subject = rs.getString("subject");
+        } catch (SQLException ignored) {}
+
         return new Room(
                 rs.getLong("id"),
                 rs.getString("name"),
                 rs.getString("type"),
+                topic,
+                subject,
                 rs.getTimestamp("created_at"),
                 rs.getTimestamp("expires_at"),
                 rs.getString("status")
